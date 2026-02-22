@@ -128,10 +128,11 @@ export default function App() {
       {focusedWidget && (
         <div
           className="absolute inset-0 z-20 flex items-center justify-center p-4"
+          style={{ overflowY: 'auto' }}
           onClick={() => setFocusedWidget(null)}
           role="presentation"
         >
-          <div className="pointer-events-auto w-[50vw] max-w-[1400px] min-w-0 min-h-0"
+          <div className="pointer-events-auto w-[50vw] max-w-[1400px] min-w-0 min-h-0 my-10"
             onClick={(e) => e.stopPropagation()}
           >
             <Widget
