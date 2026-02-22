@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Hide scrollbars on widget content (scroll still works via wheel/touch) */
+.widget-content {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.widget-content::-webkit-scrollbar {
+  display: none;
+}

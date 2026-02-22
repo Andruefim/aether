@@ -1,0 +1,5 @@
+{
+  "name": "Aether OS",
+  "description": "An experimental desktop interface where the UI is generated from user intent.",
+  "requestFramePermissions": []
+}
