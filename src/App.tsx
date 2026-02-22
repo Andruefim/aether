@@ -100,6 +100,7 @@ export default function App() {
     }
   }, [addWidget, updateWidget]);
 
+  const setFocusedWidget = useAetherStore(state => state.setFocusedWidget);
   const miniatures = widgets
     .filter(w => w.id !== focusedWidgetId)
     .sort((a, b) => a.created_at - b.created_at);
@@ -108,8 +109,8 @@ export default function App() {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#ede6da] text-white font-sans selection:bg-indigo-500/30">
       <WebGLBackground />
-      {/* Desktop miniatures strip (bottom) */}
-      <div className="absolute inset-0 pointer-events-none z-10">
+      {/* Desktop miniatures strip (bottom); z-30 so clicks work when main widget is open */}
+      <div className="absolute inset-0 pointer-events-none z-30">
         <div className="absolute bottom-0 left-0 right-0 h-[140px] flex items-end justify-start gap-3 pl-6 pb-6 pointer-events-auto">
           {miniatures.map((widget, i) => (
             <Widget
@@ -123,10 +124,16 @@ export default function App() {
           ))}
         </div>
       </div>
-      {/* Focused widget (center, full size) */}
+      {/* Focused widget (center); click outside → becomes miniature */}
       {focusedWidget && (
-        <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none p-4">
-          <div className="pointer-events-auto w-[92vw] max-w-[1400px] min-w-0 min-h-0">
+        <div
+          className="absolute inset-0 z-20 flex items-center justify-center p-4"
+          onClick={() => setFocusedWidget(null)}
+          role="presentation"
+        >
+          <div className="pointer-events-auto w-[50vw] max-w-[1400px] min-w-0 min-h-0"
+            onClick={(e) => e.stopPropagation()}
+          >
             <Widget
               key={focusedWidget.id}
               data={focusedWidget}

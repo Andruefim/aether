@@ -35,20 +35,20 @@ export const Widget: React.FC<WidgetProps> = ({
   useEffect(() => {
     if (data.isGenerating || !data.html || !containerRef.current) return;
     const el = containerRef.current;
+    el.innerHTML = '';          // ← очистка перед повторным рендером
     el.innerHTML = data.html;
     fetch(`/api/widgets/${data.id}/data`)
       .then(res => res.json())
       .then(initialData => {
         el.setAttribute('data-widget-init', JSON.stringify(initialData));
         const bootstrap = document.createElement('script');
-        bootstrap.textContent = `(function(){ var c = document.currentScript.closest('[data-widget-id]'); if(c){ window.__CURRENT_WIDGET_ID__ = c.getAttribute('data-widget-id'); try { window.__WIDGET_INIT__ = JSON.parse(c.getAttribute('data-widget-init') || '{}'); } catch(e) { window.__WIDGET_INIT__ = {}; } } })();`;
+        bootstrap.textContent = `var c = document.currentScript.closest('[data-widget-id]'); if(c){ window.__CURRENT_WIDGET_ID__ = c.getAttribute('data-widget-id'); try { window.__WIDGET_INIT__ = JSON.parse(c.getAttribute('data-widget-init') || '{}'); } catch(e) { window.__WIDGET_INIT__ = {}; } }`;
         el.appendChild(bootstrap);
         el.querySelectorAll('script').forEach(oldScript => {
           if (oldScript.src || oldScript === bootstrap) return;
           const newScript = document.createElement('script');
-          // Run in an IIFE so const/let stay local — avoids "already been declared" when
-          // scripts run in main window (no iframe isolation) or when effect re-runs
-          newScript.textContent = `(function(){\n${oldScript.textContent}\n})();`;
+
+          newScript.textContent = oldScript.textContent ?? '';
           el.appendChild(newScript);
         });
       });
@@ -144,28 +144,12 @@ export const Widget: React.FC<WidgetProps> = ({
         </button>
       )}
       {isFocused && !data.isGenerating && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            closeWidget(e);
-          }}
-          className="absolute top-3 right-3 z-20 p-1.5 rounded-md bg-black/40 text-white/80 hover:text-red-400 hover:bg-black/60 transition-colors"
-          aria-label="Close widget"
-        >
-          <X size={16} />
-        </button>
-      )}
-      {isFocused && !data.isGenerating && (
         <div
           className="absolute -top-10 left-0 right-0 h-10 flex items-center justify-between px-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-t-xl opacity-0 hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing z-10"
           onPointerDown={(e) => dragControls.start(e)}
         >
           <div className="text-white/50 text-xs font-mono truncate max-w-[200px]">
             {data.user_prompt}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={closeWidget} className="text-white/50 hover:text-red-400"><X size={14} /></button>
           </div>
         </div>
       )}
