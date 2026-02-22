@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useState, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useAetherStore } from '../store';
@@ -84,22 +84,43 @@ const BackgroundPlane = () => {
   );
 };
 
-const CrystallizationEffect = ({ widget }: { widget: any }) => {
+const FADE_OUT_DURATION_MS = 700;
+
+const CrystallizationEffect = ({
+  widget,
+  fadeOutEndTime,
+}: {
+  widget: any;
+  fadeOutEndTime?: number;
+}) => {
   const materialRef = useRef<THREE.ShaderMaterial>(null);
-  const { size, viewport } = useThree();
+  const displayProgressRef = useRef(0);
+  const { size } = useThree();
 
   const uniforms = useMemo(() => ({
     uTime: { value: 0 },
-    uProgress: { value: widget.progress || 0 },
+    uProgress: { value: 0 },
+    uEffectAlpha: { value: 1 },
     uResolution: { value: new THREE.Vector2(size.width, size.height) },
     uPosition: { value: new THREE.Vector2(widget.position_x, widget.position_y) },
     uSize: { value: new THREE.Vector2(widget.width, widget.height) },
-  }), [size, widget.position_x, widget.position_y, widget.width, widget.height]);
+  }), [size.width, size.height, widget.position_x, widget.position_y, widget.width, widget.height]);
 
   useFrame((state) => {
-    if (materialRef.current) {
-      materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
-      materialRef.current.uniforms.uProgress.value = widget.progress || 0;
+    if (!materialRef.current) return;
+    const elapsedMs = state.clock.elapsedTime * 1000;
+    materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+
+    const targetProgress = widget.progress ?? 0;
+    displayProgressRef.current += (targetProgress - displayProgressRef.current) * 0.028;
+    materialRef.current.uniforms.uProgress.value = displayProgressRef.current;
+
+    if (fadeOutEndTime != null) {
+      const t = (elapsedMs - (fadeOutEndTime - FADE_OUT_DURATION_MS)) / FADE_OUT_DURATION_MS;
+      materialRef.current.uniforms.uEffectAlpha.value = Math.max(0, 1 - t);
+    } else {
+      const fadeIn = Math.min(1, targetProgress * 4);
+      materialRef.current.uniforms.uEffectAlpha.value = fadeIn;
     }
   });
 
@@ -121,6 +142,7 @@ const CrystallizationEffect = ({ widget }: { widget: any }) => {
         fragmentShader={`
           uniform float uTime;
           uniform float uProgress;
+          uniform float uEffectAlpha;
           uniform vec2 uResolution;
           uniform vec2 uPosition;
           uniform vec2 uSize;
@@ -128,31 +150,29 @@ const CrystallizationEffect = ({ widget }: { widget: any }) => {
           ${snoise}
           
           void main() {
-            // Convert pixel coordinates to UV space (0 to 1)
             vec2 pixelCoord = vUv * uResolution;
-            
-            // Widget bounds
             vec2 widgetCenter = uPosition + uSize * 0.5;
             vec2 dist = abs(pixelCoord - widgetCenter) - uSize * 0.5;
             float d = length(max(dist, 0.0)) + min(max(dist.x, dist.y), 0.0);
             
-            // Phase 1: Emergence (0-0.3)
-            // Phase 2: Crystallization (0.3-0.8)
-            // Phase 3: Materialization (0.8-1.0)
+            float p = uProgress;
+            float phase1 = smoothstep(0.0, 0.33, p) * (1.0 - smoothstep(0.33, 0.4, p));
+            float phase2 = smoothstep(0.28, 0.4, p) * (1.0 - smoothstep(0.66, 0.75, p));
+            float phase3 = smoothstep(0.6, 0.75, p);
             
             float noise = snoise(vUv * 10.0 + uTime * 0.5);
+            float noiseFine = snoise(vUv * 25.0 + uTime * 1.2);
             
-            // Glow intensity based on distance to widget center
-            float glowRadius = mix(400.0, 50.0, smoothstep(0.0, 0.8, uProgress));
+            float glowRadius = 450.0 * (1.0 - p * 0.85) + 80.0;
             float glow = exp(-max(d, 0.0) / glowRadius);
             
-            // Add noise to glow
-            glow *= smoothstep(0.3, 0.7, noise * 0.5 + 0.5);
+            float pattern = 1.0;
+            pattern *= 0.6 + 0.4 * smoothstep(0.2, 0.8, noise * 0.5 + 0.5);
+            pattern *= phase1 + phase2 * (0.7 + 0.3 * noiseFine) + phase3 * (0.5 + 0.5 * smoothstep(0.0, 0.3, 1.0 - p));
             
-            // Fade out at the end
-            float alpha = glow * (1.0 - smoothstep(0.8, 1.0, uProgress));
+            float alpha = glow * pattern * (1.0 - smoothstep(0.85, 1.0, p)) * uEffectAlpha;
             
-            gl_FragColor = vec4(0.31, 0.56, 0.97, alpha * 0.8);
+            gl_FragColor = vec4(0.28, 0.52, 0.95, alpha * 0.85);
           }
         `}
       />
@@ -160,9 +180,38 @@ const CrystallizationEffect = ({ widget }: { widget: any }) => {
   );
 };
 
+type FadingOutItem = { widget: any; endTime: number };
+
 export const WebGLBackground: React.FC = () => {
   const widgets = useAetherStore(state => state.widgets);
   const generatingWidgets = widgets.filter(w => w.isGenerating);
+  const [fadingOut, setFadingOut] = useState<FadingOutItem[]>([]);
+  const prevGeneratingIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const now = Date.now();
+    const generatingIds = new Set(generatingWidgets.map(w => w.id));
+    const prev = prevGeneratingIdsRef.current;
+    const finishedIds = Array.from(prev).filter(id => !generatingIds.has(id));
+    prevGeneratingIdsRef.current = generatingIds;
+
+    if (finishedIds.length) {
+      const toAdd: FadingOutItem[] = finishedIds
+        .map(id => widgets.find(w => w.id === id))
+        .filter(Boolean)
+        .map(w => ({ widget: w, endTime: now + FADE_OUT_DURATION_MS }));
+      setFadingOut(prev => [...prev.filter(f => f.endTime > now), ...toAdd]);
+    }
+  }, [widgets, generatingWidgets]);
+
+  useEffect(() => {
+    if (fadingOut.length === 0) return;
+    const t = setInterval(() => {
+      const now = Date.now();
+      setFadingOut(prev => prev.filter(f => f.endTime > now));
+    }, 100);
+    return () => clearInterval(t);
+  }, [fadingOut.length]);
 
   return (
     <div className="absolute inset-0 pointer-events-none z-0">
@@ -170,6 +219,9 @@ export const WebGLBackground: React.FC = () => {
         <BackgroundPlane />
         {generatingWidgets.map(w => (
           <CrystallizationEffect key={w.id} widget={w} />
+        ))}
+        {fadingOut.map(({ widget, endTime }) => (
+          <CrystallizationEffect key={`fade-${widget.id}`} widget={widget} fadeOutEndTime={endTime} />
         ))}
       </Canvas>
     </div>

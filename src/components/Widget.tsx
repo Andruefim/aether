@@ -35,7 +35,7 @@ export const Widget: React.FC<WidgetProps> = ({
   useEffect(() => {
     if (data.isGenerating || !data.html || !containerRef.current) return;
     const el = containerRef.current;
-    el.innerHTML = '';          // ← очистка перед повторным рендером
+    el.innerHTML = '';
     el.innerHTML = data.html;
     fetch(`/api/widgets/${data.id}/data`)
       .then(res => res.json())
@@ -47,8 +47,11 @@ export const Widget: React.FC<WidgetProps> = ({
         el.querySelectorAll('script').forEach(oldScript => {
           if (oldScript.src || oldScript === bootstrap) return;
           const newScript = document.createElement('script');
-
-          newScript.textContent = oldScript.textContent ?? '';
+          // var можно переобъявить — const/let при повторном монтировании
+          // падают с "already declared" и убивают все функции виджета
+          newScript.textContent = (oldScript.textContent ?? '')
+            .replace(/\bconst\s+/g, 'var ')
+            .replace(/\blet\s+/g, 'var ');
           el.appendChild(newScript);
         });
       });
