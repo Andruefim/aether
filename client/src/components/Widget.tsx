@@ -25,9 +25,9 @@ export const Widget: React.FC<WidgetProps> = ({
   miniatureHeight = 120,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const updateWidget = useAetherStore(state => state.updateWidget);
-  const removeWidget = useAetherStore(state => state.removeWidget);
-  const setFocusedWidget = useAetherStore(state => state.setFocusedWidget);
+  const updateWidget = useAetherStore((state) => state.updateWidget);
+  const removeWidget = useAetherStore((state) => state.removeWidget);
+  const setFocusedWidget = useAetherStore((state) => state.setFocusedWidget);
   const dragControls = useDragControls();
   const [isDragging, setIsDragging] = useState(false);
   const isFocused = mode === 'focused';
@@ -39,17 +39,15 @@ export const Widget: React.FC<WidgetProps> = ({
     el.innerHTML = '';
     el.innerHTML = stripMarkdownCodeFence(data.html);
     fetch(`/api/widgets/${data.id}/data`)
-      .then(res => res.json())
-      .then(initialData => {
+      .then((res) => res.json())
+      .then((initialData) => {
         el.setAttribute('data-widget-init', JSON.stringify(initialData));
         const bootstrap = document.createElement('script');
         bootstrap.textContent = `var c = document.currentScript.closest('[data-widget-id]'); if(c){ window.__CURRENT_WIDGET_ID__ = c.getAttribute('data-widget-id'); try { window.__WIDGET_INIT__ = JSON.parse(c.getAttribute('data-widget-init') || '{}'); } catch(e) { window.__WIDGET_INIT__ = {}; } }`;
         el.appendChild(bootstrap);
-        el.querySelectorAll('script').forEach(oldScript => {
+        el.querySelectorAll('script').forEach((oldScript) => {
           if (oldScript.src || oldScript === bootstrap) return;
           const newScript = document.createElement('script');
-          // var можно переобъявить — const/let при повторном монтировании
-          // падают с "already declared" и убивают все функции виджета
           newScript.textContent = (oldScript.textContent ?? '')
             .replace(/\bconst\s+/g, 'var ')
             .replace(/\blet\s+/g, 'var ');
@@ -66,25 +64,25 @@ export const Widget: React.FC<WidgetProps> = ({
         fetch(`/api/widgets/${data.id}/data`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(e.data.data ?? e.data)
+          body: JSON.stringify(e.data.data ?? e.data),
         });
       } else if (e.data?.type === 'close') {
         const { widgets } = useAetherStore.getState();
-        const other = widgets.find(w => w.id !== data.id);
+        const other = widgets.find((w) => w.id !== data.id);
         useAetherStore.getState().setFocusedWidget(other?.id ?? null);
         fetch(`/api/widgets/${data.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ minimized: true })
+          body: JSON.stringify({ minimized: true }),
         });
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [data.id, updateWidget]);
+  }, [data.id]);
 
-  const handleDragEnd = (event: any, info: any) => {
+  const handleDragEnd = (_event: unknown, info: { offset: { x: number; y: number } }) => {
     setIsDragging(false);
     const newX = data.position_x + info.offset.x;
     const newY = data.position_y + info.offset.y;
@@ -92,7 +90,7 @@ export const Widget: React.FC<WidgetProps> = ({
     fetch(`/api/widgets/${data.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ position_x: newX, position_y: newY })
+      body: JSON.stringify({ position_x: newX, position_y: newY }),
     });
   };
 
@@ -130,7 +128,7 @@ export const Widget: React.FC<WidgetProps> = ({
       style={{
         width,
         height,
-        transformOrigin: isFocused ? 'center center' : 'center center',
+        transformOrigin: 'center center',
       }}
       onClick={isMiniaure ? focusThisWidget : undefined}
     >
@@ -157,7 +155,9 @@ export const Widget: React.FC<WidgetProps> = ({
           </div>
         </div>
       )}
-      <div className={`w-full h-full min-w-[400px] min-h-[300px] rounded-2xl overflow-hidden relative ${data.isGenerating ? 'bg-white/5 border border-white/10 backdrop-blur-xl' : 'bg-white/15 backdrop-blur-xl border border-white/10'}`}>
+      <div
+        className={`w-full h-full min-w-[400px] min-h-[300px] rounded-2xl overflow-hidden relative ${data.isGenerating ? 'bg-white/5 border border-white/10 backdrop-blur-xl' : 'bg-white/15 backdrop-blur-xl border border-white/10'}`}
+      >
         {data.isGenerating ? (
           <div className="w-full h-full flex flex-col items-center justify-center text-white/50 font-mono text-sm">
             <div className="mb-4">Crystallizing...</div>

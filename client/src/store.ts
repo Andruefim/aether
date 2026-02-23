@@ -13,7 +13,7 @@ export interface WidgetData {
   opacity_decay: number;
   minimized: boolean;
   isGenerating?: boolean;
-  progress?: number; // 0.0 to 1.0
+  progress?: number;
 }
 
 interface AetherStore {
@@ -41,13 +41,11 @@ export const useAetherStore = create<AetherStore>((set) => ({
     focusedWidgetId: widget.id,
   })),
   updateWidget: (id, updates) => set((state) => ({
-    widgets: state.widgets.map(w => w.id === id ? { ...w, ...updates } : w)
+    widgets: state.widgets.map((w) => (w.id === id ? { ...w, ...updates } : w)),
   })),
   removeWidget: (id) => set((state) => {
-    const next = state.widgets.filter(w => w.id !== id);
-    const nextFocused = state.focusedWidgetId === id
-      ? (next[0]?.id ?? null)
-      : state.focusedWidgetId;
+    const next = state.widgets.filter((w) => w.id !== id);
+    const nextFocused = state.focusedWidgetId === id ? (next[0]?.id ?? null) : state.focusedWidgetId;
     return { widgets: next, focusedWidgetId: nextFocused };
   }),
   activePrompt: '',

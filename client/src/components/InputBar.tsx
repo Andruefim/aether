@@ -5,7 +5,7 @@ import { motion } from 'motion/react';
 
 export const InputBar: React.FC<{ onSubmit: (prompt: string) => void }> = ({ onSubmit }) => {
   const [input, setInput] = useState('');
-  const activePrompt = useAetherStore(state => state.activePrompt);
+  useAetherStore((state) => state.activePrompt);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -17,7 +17,7 @@ export const InputBar: React.FC<{ onSubmit: (prompt: string) => void }> = ({ onS
 
   return (
     <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 w-full max-w-2xl px-4">
-      <motion.form 
+      <motion.form
         initial={{ y: 50, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
@@ -35,7 +35,7 @@ export const InputBar: React.FC<{ onSubmit: (prompt: string) => void }> = ({ onS
           className="w-full py-4 px-2 bg-transparent text-white placeholder-white/30 outline-none font-sans text-lg"
           autoFocus
         />
-        <button 
+        <button
           type="submit"
           disabled={!input.trim()}
           className="px-6 py-2 mr-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:hover:bg-white/10 text-white rounded-xl transition-colors font-medium text-sm"
