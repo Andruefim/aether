@@ -4,6 +4,7 @@ import { InputBar } from './components/InputBar';
 import { Widget } from './components/Widget';
 import { useAetherStore } from './store';
 import { v4 as uuidv4 } from 'uuid';
+import { stripMarkdownCodeFence } from './utils/widgetHtml';
 
 const MINIATURE_WIDTH = 160;
 const MINIATURE_HEIGHT = 120;
@@ -70,13 +71,12 @@ export default function App() {
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
             if (data === '[DONE]') {
-              updateWidget(id, { html, isGenerating: false, progress: 1.0 });
-              
-              // Update DB with final HTML
+              const cleanHtml = stripMarkdownCodeFence(html);
+              updateWidget(id, { html: cleanHtml, isGenerating: false, progress: 1.0 });
               await fetch(`/api/widgets/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ html }),
+                body: JSON.stringify({ html: cleanHtml }),
               });
               break;
             }

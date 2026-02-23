@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { WidgetData, useAetherStore } from '../store';
 import { motion, useDragControls } from 'motion/react';
 import { X } from 'lucide-react';
+import { stripMarkdownCodeFence } from '../utils/widgetHtml';
 
 export type WidgetMode = 'focused' | 'miniature';
 
@@ -36,7 +37,7 @@ export const Widget: React.FC<WidgetProps> = ({
     if (data.isGenerating || !data.html || !containerRef.current) return;
     const el = containerRef.current;
     el.innerHTML = '';
-    el.innerHTML = data.html;
+    el.innerHTML = stripMarkdownCodeFence(data.html);
     fetch(`/api/widgets/${data.id}/data`)
       .then(res => res.json())
       .then(initialData => {
