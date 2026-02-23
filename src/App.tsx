@@ -132,7 +132,7 @@ export default function App() {
           onClick={() => setFocusedWidget(null)}
           role="presentation"
         >
-          <div className="pointer-events-auto w-[50vw] max-w-[1400px] min-w-0 min-h-0 my-10"
+          <div className="pointer-events-auto min-w-0 min-h-0 my-10"
             onClick={(e) => e.stopPropagation()}
           >
             <Widget
