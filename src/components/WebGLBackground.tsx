@@ -213,15 +213,18 @@ export const WebGLBackground: React.FC = () => {
     return () => clearInterval(t);
   }, [fadingOut.length]);
 
+  const effectItems = useMemo(() => {
+    const fromGenerating = generatingWidgets.map(w => ({ widget: w, fadeOutEndTime: undefined as number | undefined }));
+    const fromFading = fadingOut.map(({ widget, endTime }) => ({ widget, fadeOutEndTime: endTime }));
+    return [...fromGenerating, ...fromFading];
+  }, [generatingWidgets, fadingOut]);
+
   return (
     <div className="absolute inset-0 pointer-events-none z-0">
       <Canvas orthographic camera={{ position: [0, 0, 1], zoom: 1 }}>
         <BackgroundPlane />
-        {generatingWidgets.map(w => (
-          <CrystallizationEffect key={w.id} widget={w} />
-        ))}
-        {fadingOut.map(({ widget, endTime }) => (
-          <CrystallizationEffect key={`fade-${widget.id}`} widget={widget} fadeOutEndTime={endTime} />
+        {effectItems.map(({ widget, fadeOutEndTime }) => (
+          <CrystallizationEffect key={widget.id} widget={widget} fadeOutEndTime={fadeOutEndTime} />
         ))}
       </Canvas>
     </div>
