@@ -142,6 +142,7 @@ RULES:
 - For saving data: window.parent.postMessage({type:'save', widgetId:window.__CURRENT_WIDGET_ID__, data:{...}}, '*')
 - For closing: window.parent.postMessage({type:'close', widgetId:window.__CURRENT_WIDGET_ID__}, '*')
 - For loading initial data: use window.__WIDGET_INIT__ (object, available as soon as script runs)
+- Never use window.alert(), window.confirm(), or window.prompt(). Show all messages, errors, and feedback inside the widget (e.g. update a div or show a small inline message area).
 - Output raw HTML only. No markdown. No explanation.`;
 
     try {
