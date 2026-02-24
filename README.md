@@ -5,7 +5,7 @@ Experimental desktop-style UI where widgets are generated from natural language 
 ## Prerequisites
 
 - Node.js 18+
-- [Ollama](https://ollama.com) with a chat model (e.g. `ollama pull qwen3:latest`)
+- [Ollama](https://ollama.com) with a chat model (e.g. `ollama pull qwen3-coder:30b`)
 - MySQL (create a database, e.g. `aether`)
 
 ## Setup

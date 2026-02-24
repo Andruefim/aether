@@ -6,6 +6,8 @@ import { WidgetsModule } from './widgets/widgets.module';
 import { GenerateModule } from './generate/generate.module';
 import { Widget } from './widgets/entities/widget.entity';
 import { WidgetData } from './widgets/entities/widget-data.entity';
+import { WebSearchModule } from './web-search/web-search.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 
 const rootEnvPath = join(__dirname, '..', '..', '.env');
 
@@ -31,6 +33,8 @@ const rootEnvPath = join(__dirname, '..', '..', '.env');
     }),
     WidgetsModule,
     GenerateModule,
+    WebSearchModule,
+    IntegrationsModule,
   ],
 })
 export class AppModule {}

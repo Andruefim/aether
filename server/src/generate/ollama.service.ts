@@ -1,6 +1,33 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+export interface OllamaMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: OllamaToolCall[];
+  tool_name?: string;
+}
+
+export interface OllamaToolCall {
+  function: {
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+}
+
+export interface OllamaTool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: 'object';
+      properties: Record<string, { type: string; description: string }>;
+      required?: string[];
+    };
+  };
+}
+
 @Injectable()
 export class OllamaService {
   private readonly baseUrl: string;
@@ -8,28 +35,56 @@ export class OllamaService {
 
   constructor(private readonly config: ConfigService) {
     this.baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
-    this.model = this.config.get<string>('OLLAMA_MODEL', 'qwen3:latest');
+    this.model = this.config.get<string>('OLLAMA_MODEL', 'qwen3-coder:30b');
   }
 
-  async *streamGenerate(prompt: string, systemInstruction: string): AsyncGenerator<string> {
-    const url = `${this.baseUrl}/api/chat`;
-    const res = await fetch(url, {
+  /** Non-streaming single turn — used for the agentic tool-call loop. */
+  async chat(
+    messages: OllamaMessage[],
+    tools?: OllamaTool[],
+  ): Promise<OllamaMessage> {
+    const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: this.model,
-        messages: [
-          { role: 'system', content: systemInstruction },
-          { role: 'user', content: prompt },
-        ],
+        messages,
+        tools,
+        stream: false,
+        options: { temperature: 0.2 },
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Ollama chat failed: ${res.statusText}`);
+    const data = (await res.json()) as { message: OllamaMessage };
+    return data.message;
+  }
+
+  /** Streaming token generator — used for the final answer. */
+  async *streamGenerate(
+    prompt: string,
+    systemInstruction: string,
+  ): AsyncGenerator<string> {
+    yield* this.streamMessages([
+      { role: 'system', content: systemInstruction },
+      { role: 'user', content: prompt },
+    ]);
+  }
+
+  /** Streaming from an arbitrary message history — used after the tool loop. */
+  async *streamMessages(messages: OllamaMessage[]): AsyncGenerator<string> {
+    const res = await fetch(`${this.baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
         stream: true,
         options: { temperature: 0.2 },
       }),
     });
 
-    if (!res.ok || !res.body) {
-      throw new Error(res.statusText || 'Ollama request failed');
-    }
+    if (!res.ok || !res.body) throw new Error(res.statusText || 'Ollama request failed');
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -47,9 +102,7 @@ export class OllamaService {
         if (!trimmed) continue;
         try {
           const chunk = JSON.parse(trimmed) as { message?: { content?: string } };
-          if (chunk.message?.content) {
-            yield chunk.message.content;
-          }
+          if (chunk.message?.content) yield chunk.message.content;
         } catch {
           // skip malformed
         }
