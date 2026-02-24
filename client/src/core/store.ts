@@ -26,6 +26,9 @@ interface AetherStore {
   removeWidget: (id: string) => void;
   activePrompt: string;
   setActivePrompt: (prompt: string) => void;
+  /** When true, show live HTML preview (no scripts) during generation; when false, show "Crystallizing..." progress. */
+  generativePreviewEnabled: boolean;
+  setGenerativePreviewEnabled: (value: boolean) => void;
 }
 
 export const useAetherStore = create<AetherStore>((set) => ({
@@ -50,4 +53,6 @@ export const useAetherStore = create<AetherStore>((set) => ({
   }),
   activePrompt: '',
   setActivePrompt: (prompt) => set({ activePrompt: prompt }),
+  generativePreviewEnabled: true,
+  setGenerativePreviewEnabled: (value) => set({ generativePreviewEnabled: value }),
 }));

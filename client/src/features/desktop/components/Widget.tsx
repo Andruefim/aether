@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { type WidgetData, useAetherStore } from '../../../core';
 import { stripMarkdownCodeFence } from '../../../shared';
+import { WidgetPreview } from '../../preview';
 import { motion, useDragControls } from 'motion/react';
 import { X } from 'lucide-react';
 
@@ -28,6 +29,8 @@ export const Widget: React.FC<WidgetProps> = ({
   const updateWidget = useAetherStore((state) => state.updateWidget);
   const removeWidget = useAetherStore((state) => state.removeWidget);
   const setFocusedWidget = useAetherStore((state) => state.setFocusedWidget);
+  const generativePreviewEnabled = useAetherStore((state) => state.generativePreviewEnabled);
+  const setGenerativePreviewEnabled = useAetherStore((state) => state.setGenerativePreviewEnabled);
   const dragControls = useDragControls();
   const [isDragging, setIsDragging] = useState(false);
   const isFocused = mode === 'focused';
@@ -159,14 +162,32 @@ export const Widget: React.FC<WidgetProps> = ({
         className={`w-full h-full min-w-[200x] min-h-[100px] align-middle rounded-2xl overflow-hidden relative ${data.isGenerating ? 'bg-white/5 border border-white/10 backdrop-blur-xl' : 'bg-white/15 backdrop-blur-xl border border-white/10'}`}
       >
         {data.isGenerating ? (
-          <div className="w-full h-full flex flex-col items-center justify-center text-white/50 font-mono text-sm">
-            <div className="mb-4">Crystallizing...</div>
-            <div className="w-32 h-1 bg-white/10 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-indigo-500 transition-all duration-200"
-                style={{ width: `${(data.progress || 0) * 100}%` }}
+          <div className="w-full h-full flex flex-col min-h-0">
+            {generativePreviewEnabled && data.html ? (
+              <WidgetPreview
+                html={stripMarkdownCodeFence(data.html)}
+                className="flex-1 min-h-0 w-full"
               />
-            </div>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-white/50 font-mono text-sm">
+                <div className="mb-4">Crystallizing...</div>
+                <div className="w-32 h-1 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-indigo-500 transition-all duration-200"
+                    style={{ width: `${(data.progress || 0) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            <label className="flex items-center gap-2 px-3 py-2 text-white/50 text-xs border-t border-white/10 shrink-0">
+              <input
+                type="checkbox"
+                checked={generativePreviewEnabled}
+                onChange={(e) => setGenerativePreviewEnabled(e.target.checked)}
+                className="rounded border-white/30 bg-white/10"
+              />
+              <span>Live HTML preview</span>
+            </label>
           </div>
         ) : (
           <div
