@@ -2,7 +2,7 @@ import React, { useEffect, useCallback } from 'react';
 import { WebGLBackground } from './components/WebGLBackground';
 import { InputBar } from './components/InputBar';
 import { Widget } from './components/Widget';
-import { useAetherStore } from './store';
+import { useAetherStore, type WidgetData } from './store';
 import { v4 as uuidv4 } from 'uuid';
 import { stripMarkdownCodeFence } from './utils/widgetHtml';
 
@@ -19,7 +19,17 @@ export default function App() {
   useEffect(() => {
     fetch('/api/widgets')
       .then((res) => res.json())
-      .then((data) => setWidgets(data));
+      .then((data: WidgetData[]) => {
+        const current = useAetherStore.getState().widgets;
+        const generating = current.filter((w) => w.isGenerating);
+        const serverIds = new Set(data.map((w) => w.id));
+        const merged = data.map((w) => {
+          const cur = generating.find((g) => g.id === w.id);
+          return cur ?? w;
+        });
+        const generatingOnly = generating.filter((g) => !serverIds.has(g.id));
+        setWidgets([...merged, ...generatingOnly]);
+      });
   }, [setWidgets]);
 
   const handleGenerate = useCallback(
@@ -57,40 +67,76 @@ export default function App() {
         const decoder = new TextDecoder();
         let html = '';
         let buffer = '';
+        let finished = false;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        const processPayload = (raw: string) => {
+          const data = raw.trim();
+          if (data === '[DONE]') {
+            finished = true;
+            const cleanHtml = stripMarkdownCodeFence(html);
+            updateWidget(id, { html: cleanHtml, isGenerating: false, progress: 1.0 });
+            fetch(`/api/widgets/${id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ html: cleanHtml }),
+            });
+            return;
+          }
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.text) {
+              html += parsed.text;
+              const progress = Math.min(0.95, html.length / 2000);
+              updateWidget(id, { html, progress });
+            }
+          } catch {
+            // skip non-JSON lines
+          }
+        };
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || '';
-
+        const processSegment = (segment: string) => {
+          const lines = segment.split('\n');
           for (const line of lines) {
             if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              if (data === '[DONE]') {
-                const cleanHtml = stripMarkdownCodeFence(html);
-                updateWidget(id, { html: cleanHtml, isGenerating: false, progress: 1.0 });
-                await fetch(`/api/widgets/${id}`, {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ html: cleanHtml }),
-                });
-                break;
-              }
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.text) {
-                  html += parsed.text;
-                  const progress = Math.min(0.95, html.length / 2000);
-                  updateWidget(id, { html, progress });
-                }
-              } catch (e) {
-                console.error('Parse error', e);
-              }
+              processPayload(line.slice(6));
+              break;
             }
           }
+        };
+
+        while (!finished) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            if (buffer.trim()) {
+              const segments = buffer.split(/\n\n+/);
+              for (const seg of segments) {
+                processSegment(seg);
+                if (finished) break;
+              }
+            }
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const segments = buffer.split(/\n\n+/);
+          buffer = segments.pop() || '';
+
+          for (const seg of segments) {
+            processSegment(seg);
+            if (finished) break;
+          }
+        }
+
+        // Fallback: if stream ended without [DONE], still finalize widget
+        if (!finished && html) {
+          const cleanHtml = stripMarkdownCodeFence(html);
+          updateWidget(id, { html: cleanHtml, isGenerating: false, progress: 1.0 });
+          await fetch(`/api/widgets/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ html: cleanHtml }),
+          });
         }
       } catch (error) {
         console.error('Generation failed:', error);
