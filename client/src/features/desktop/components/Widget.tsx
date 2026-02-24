@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { WidgetData, useAetherStore } from '../store';
+import { type WidgetData, useAetherStore } from '../../../core';
+import { stripMarkdownCodeFence } from '../../../shared';
 import { motion, useDragControls } from 'motion/react';
 import { X } from 'lucide-react';
-import { stripMarkdownCodeFence } from '../utils/widgetHtml';
 
 export type WidgetMode = 'focused' | 'miniature';
 

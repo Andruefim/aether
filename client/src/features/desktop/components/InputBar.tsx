@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAetherStore } from '../store';
+import { useAetherStore } from '../../../core';
 import { Search, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
 

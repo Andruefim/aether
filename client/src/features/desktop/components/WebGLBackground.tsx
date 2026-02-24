@@ -1,7 +1,7 @@
 import React, { useRef, useMemo, useState, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useAetherStore } from '../store';
+import { useAetherStore } from '../../../core';
 
 const snoise = `
 vec3 permute(vec3 x) { return mod(((x*34.0)+1.0)*x, 289.0); }
