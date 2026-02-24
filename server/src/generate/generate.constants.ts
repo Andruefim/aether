@@ -4,7 +4,7 @@ Generate a single self-contained HTML widget.
 RULES:
 - ALWAYS use the glass/light style below. Never use dark backgrounds or dark theme (no rgba(12,15,26), no #0c0f1a, no light-on-dark). This applies to every widget type including calendars.
 - Maximum 60 lines total
-- Glass style (mandatory): background rgba(255,255,255,0.12), text rgba(0,0,0,0.75) or #374151
+- Glass style (mandatory): background rgba(255,255,255,0.12), text white or rgba(255,255,255,0.95). Never use dark text (no #374151, no black, no dark grey).
 - backdrop-filter: blur(16px), -webkit-backdrop-filter: blur(16px)
 - border: 1px solid rgba(255,255,255,0.2), border-radius: 16px, padding: 20px
 - Font: system-ui. No external resources.

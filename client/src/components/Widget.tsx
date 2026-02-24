@@ -156,7 +156,7 @@ export const Widget: React.FC<WidgetProps> = ({
         </div>
       )}
       <div
-        className={`w-full h-full min-w-[400px] min-h-[300px] rounded-2xl overflow-hidden relative ${data.isGenerating ? 'bg-white/5 border border-white/10 backdrop-blur-xl' : 'bg-white/15 backdrop-blur-xl border border-white/10'}`}
+        className={`w-full h-full min-w-[200x] min-h-[100px] align-middle rounded-2xl overflow-hidden relative ${data.isGenerating ? 'bg-white/5 border border-white/10 backdrop-blur-xl' : 'bg-white/15 backdrop-blur-xl border border-white/10'}`}
       >
         {data.isGenerating ? (
           <div className="w-full h-full flex flex-col items-center justify-center text-white/50 font-mono text-sm">
