@@ -1,9 +1,4 @@
-import {
-  Column,
-  Entity,
-  OneToMany,
-  PrimaryColumn,
-} from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryColumn } from 'typeorm';
 import { WidgetData } from './widget-data.entity';
 
 @Entity('widgets')
@@ -16,6 +11,9 @@ export class Widget {
 
   @Column({ type: 'longtext' })
   html: string;
+
+  @Column({ type: 'longtext', nullable: true, default: null })
+  preview_html: string | null;
 
   @Column({ type: 'double', default: 0 })
   position_x: number;

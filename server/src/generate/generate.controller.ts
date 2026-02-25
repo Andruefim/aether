@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Sse } from '@nestjs/common';
+import { Controller, Get, Post, Query, Body, Sse, BadRequestException } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { GenerateService } from './generate.service';
 import { WIDGET_SYSTEM_PROMPT, AGENTIC_SYSTEM_PROMPT } from './generate.constants';
@@ -9,38 +9,34 @@ export class GenerateController {
 
   @Get()
   @Sse()
-  generate(
-    @Query('prompt') prompt: string | undefined,
-  ): Observable<{ data: string }> {
-    if (!prompt?.trim()) {
-      return new Observable((s) => s.complete());
-    }
+  generate(@Query('prompt') prompt: string | undefined): Observable<{ data: string }> {
+    if (!prompt?.trim()) return new Observable((s) => s.complete());
     return this.generateService.streamGenerate(prompt.trim(), WIDGET_SYSTEM_PROMPT);
   }
 
-  /**
-   * Agentic endpoint — the model may call web_search / web_fetch before answering.
-   *
-   * SSE event shapes:
-   *   { tool: "web_search", args: { query: "..." } }   ← tool invocation in progress
-   *   { text: "token" }                                 ← final streamed answer
-   *   [DONE]                                            ← stream finished
-   *   { error: "..." }                                  ← something went wrong
-   *
-   * Optional ?system= override for the system prompt.
-   */
   @Get('agent')
   @Sse()
   agentGenerate(
     @Query('prompt') prompt: string | undefined,
     @Query('system') system: string | undefined,
   ): Observable<{ data: string }> {
-    if (!prompt?.trim()) {
-      return new Observable((s) => s.complete());
+    if (!prompt?.trim()) return new Observable((s) => s.complete());
+    return this.generateService.streamAgenticGenerate(prompt.trim(), system?.trim() || AGENTIC_SYSTEM_PROMPT);
+  }
+
+  /**
+   * POST /api/generate/preview
+   * Body: { widgetId: string, userPrompt: string }
+   * Generates a minimalist 160x120 thumbnail from the user's prompt text (not the full HTML).
+   */
+  @Post('preview')
+  async generatePreview(
+    @Body() body: { widgetId: string; userPrompt: string },
+  ): Promise<{ html: string }> {
+    if (!body.widgetId || !body.userPrompt) {
+      throw new BadRequestException('widgetId and userPrompt are required');
     }
-    return this.generateService.streamAgenticGenerate(
-      prompt.trim(),
-      system?.trim() || AGENTIC_SYSTEM_PROMPT,
-    );
+    const html = await this.generateService.generatePreview(body.widgetId, body.userPrompt);
+    return { html };
   }
 }

@@ -14,6 +14,7 @@ export interface WidgetData {
   minimized: boolean;
   isGenerating?: boolean;
   progress?: number;
+  preview_html: string | null;
 }
 
 interface AetherStore {
