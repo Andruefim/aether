@@ -47,6 +47,8 @@ export class YoutubeService {
   private readonly apiKey: string;
   private readonly baseUrl = 'https://www.googleapis.com/youtube/v3';
   private readonly cache = new Map<string, CacheEntry<unknown>>();
+  /** In-flight requests by cache key — subsequent callers wait for the same promise. */
+  private readonly inFlight = new Map<string, Promise<unknown>>();
 
   constructor(private readonly config: ConfigService) {
     this.apiKey = this.config.get<string>('YOUTUBE_API_KEY', '');
@@ -123,17 +125,34 @@ export class YoutubeService {
       return cached.data as T;
     }
 
-    this.logger.debug(`Cache MISS: ${cacheKey.split('?')[0]} — calling YouTube API`);
+    let pending = this.inFlight.get(cacheKey);
+    if (pending) {
+      this.logger.debug(`Cache coalesce: waiting for in-flight request — ${cacheKey.split('?')[0]}`);
+      return pending as Promise<T>;
+    }
 
+    this.logger.debug(`Cache MISS: ${cacheKey.split('?')[0]} — calling YouTube API`);
+    // Set in-flight BEFORE any await so concurrent requests see it and coalesce
+    const promise = new Promise<T>((resolve, reject) => {
+      this.fetchAndCache<T>(url, cacheKey).then(resolve).catch(reject);
+    });
+    this.inFlight.set(cacheKey, promise);
+    try {
+      const data = await promise;
+      return data;
+    } finally {
+      this.inFlight.delete(cacheKey);
+    }
+  }
+
+  private async fetchAndCache<T>(url: string, cacheKey: string): Promise<T> {
     const res = await fetch(url);
     const data = (await res.json()) as T & { error?: { message: string } };
     if (!res.ok) {
       throw new Error((data as { error?: { message: string } }).error?.message ?? res.statusText);
     }
-
     this.cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
     this.evictExpired();
-
     return data;
   }
 
