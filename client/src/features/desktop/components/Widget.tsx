@@ -10,8 +10,8 @@ export type WidgetMode = 'focused' | 'miniature';
 export type WidgetProps = {
   data: WidgetData;
   mode: WidgetMode;
-  mainWidth?: number;
-  mainHeight?: number;
+  mainWidth?: number | string;
+  mainHeight?: number | string;
   miniatureSlot?: number;
   miniatureWidth?: number;
   miniatureHeight?: number;
