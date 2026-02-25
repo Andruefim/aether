@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { type WidgetData, useAetherStore } from '../../../core';
 import { stripMarkdownCodeFence } from '../../../shared';
 import { WidgetPreview } from '../../preview';
-import { motion, useDragControls } from 'motion/react';
+import { motion, useDragControls, useMotionValue } from 'motion/react';
 import { X } from 'lucide-react';
 
 export type WidgetMode = 'focused' | 'miniature';
@@ -15,6 +15,8 @@ export type WidgetProps = {
   miniatureSlot?: number;
   miniatureWidth?: number;
   miniatureHeight?: number;
+  /** When provided, miniature click calls this instead of opening internally (used when multiple windows allowed). */
+  onOpen?: () => void;
 };
 
 async function requestPreview(widgetId: string, widgetUserPrompt: string): Promise<void> {
@@ -40,14 +42,19 @@ export const Widget: React.FC<WidgetProps> = ({
   mainHeight = 420,
   miniatureWidth = 160,
   miniatureHeight = 120,
+  onOpen,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastInjectedRef = useRef<{ id: string; html: string } | null>(null);
   const updateWidget = useAetherStore((state) => state.updateWidget);
   const removeWidget = useAetherStore((state) => state.removeWidget);
-  const setFocusedWidget = useAetherStore((state) => state.setFocusedWidget);
+  const openWidget = useAetherStore((state) => state.openWidget);
+  const closeWindowToMiniature = useAetherStore((state) => state.closeWindowToMiniature);
   const generativePreviewEnabled = useAetherStore((state) => state.generativePreviewEnabled);
   const setGenerativePreviewEnabled = useAetherStore((state) => state.setGenerativePreviewEnabled);
   const dragControls = useDragControls();
+  const dragX = useMotionValue(0);
+  const dragY = useMotionValue(0);
   const [isDragging, setIsDragging] = useState(false);
   const isFocused = mode === 'focused';
   const isMiniature = mode === 'miniature';
@@ -59,6 +66,9 @@ export const Widget: React.FC<WidgetProps> = ({
     if (!isFocused) return;
     if (data.isGenerating || !data.html || !containerRef.current) return;
     const el = containerRef.current;
+    // Skip re-inject if we already have the same content (avoids flash on re-render)
+    if (lastInjectedRef.current?.id === data.id && lastInjectedRef.current?.html === cleanHtml) return;
+    lastInjectedRef.current = { id: data.id, html: cleanHtml };
     el.innerHTML = '';
     el.innerHTML = cleanHtml;
     fetch(`/api/widgets/${data.id}/data`)
@@ -97,9 +107,7 @@ export const Widget: React.FC<WidgetProps> = ({
           body: JSON.stringify(e.data.data ?? e.data),
         });
       } else if (e.data?.type === 'close') {
-        const { widgets } = useAetherStore.getState();
-        const other = widgets.find((w) => w.id !== data.id);
-        useAetherStore.getState().setFocusedWidget(other?.id ?? null);
+        useAetherStore.getState().closeWindowToMiniature(data.id);
         fetch(`/api/widgets/${data.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -121,6 +129,8 @@ export const Widget: React.FC<WidgetProps> = ({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ position_x: newX, position_y: newY }),
     });
+    dragX.set(0);
+    dragY.set(0);
   };
 
   const closeWidget = (e: React.MouseEvent) => {
@@ -129,26 +139,41 @@ export const Widget: React.FC<WidgetProps> = ({
     fetch(`/api/widgets/${data.id}`, { method: 'DELETE' });
   };
 
+  const minimizeWindow = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    closeWindowToMiniature(data.id);
+    updateWidget(data.id, { minimized: true });
+    fetch(`/api/widgets/${data.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minimized: true }),
+    });
+  };
+
   const blurAmount = data.isGenerating ? Math.max(0, 16 - (data.progress || 0) * 16) : 0;
   const opacity = data.isGenerating ? (data.progress || 0) : 1;
 
   return (
     <motion.div
+      key={data.id}
       drag={isFocused && !data.isGenerating}
       dragControls={dragControls}
       dragListener={false}
+      dragMomentum={false}
+      style={{
+        x: isFocused ? dragX : undefined,
+        y: isFocused ? dragY : undefined,
+        width: isFocused ? '100%' : miniatureWidth,
+        height: isFocused ? '100%' : miniatureHeight,
+        transformOrigin: 'center center',
+      }}
       onDragStart={() => isFocused && setIsDragging(true)}
       onDragEnd={handleDragEnd}
       initial={isMiniature ? false : { scale: 0.9, opacity: 0 }}
       animate={{ scale: 1, opacity, filter: `blur(${blurAmount}px)` }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
       className={`relative rounded-2xl overflow-hidden shrink-0 ${isMiniature ? 'cursor-pointer' : ''}`}
-      style={{
-        width: isFocused ? '100%' : miniatureWidth,
-        height: isFocused ? '100%' : miniatureHeight,
-        transformOrigin: 'center center',
-      }}
-      onClick={isMiniature ? () => setFocusedWidget(data.id) : undefined}
+      onClick={isMiniature ? () => (onOpen ? onOpen() : openWidget(data.id)) : undefined}
     >
       {isMiniature && (
         <button
@@ -166,8 +191,16 @@ export const Widget: React.FC<WidgetProps> = ({
           <div className="absolute top-[10px] right-0 w-[10px] bottom-[10px] cursor-grab active:cursor-grabbing pointer-events-auto" onPointerDown={(e) => dragControls.start(e)} />
           <div className="absolute bottom-0 left-0 right-0 h-[10px] cursor-grab active:cursor-grabbing rounded-b-2xl pointer-events-auto" onPointerDown={(e) => dragControls.start(e)} />
           <div className="absolute top-[10px] left-0 w-[10px] bottom-[10px] cursor-grab active:cursor-grabbing rounded-l-2xl pointer-events-auto" onPointerDown={(e) => dragControls.start(e)} />
-          <div className="absolute -top-10 left-0 right-0 h-10 flex items-center px-4 text-white/50 text-xs font-mono truncate max-w-[200px] pointer-events-none">
-            {data.user_prompt}
+          <div className="absolute -top-10 left-0 right-0 h-10 flex items-center justify-between px-4 text-white/50 text-xs font-mono truncate max-w-[200px] pointer-events-none">
+            <span className="truncate">{data.user_prompt}</span>
+            <button
+              type="button"
+              onClick={minimizeWindow}
+              className="shrink-0 p-1 rounded-md bg-black/20 text-white/70 hover:text-white hover:bg-black/40 pointer-events-auto transition-colors"
+              aria-label="Minimize to grid"
+            >
+              <X size={12} />
+            </button>
           </div>
         </div>
       )}

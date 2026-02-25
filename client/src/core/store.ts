@@ -19,9 +19,12 @@ export interface WidgetData {
 
 interface AetherStore {
   widgets: WidgetData[];
-  focusedWidgetId: string | null;
+  /** IDs of widgets shown as windows (order = z-order, last = on top). */
+  openWidgetIds: string[];
   setWidgets: (widgets: WidgetData[]) => void;
-  setFocusedWidget: (id: string | null) => void;
+  openWidget: (id: string) => void;
+  closeAllToMiniatures: () => void;
+  closeWindowToMiniature: (id: string) => void;
   addWidget: (widget: WidgetData) => void;
   updateWidget: (id: string, updates: Partial<WidgetData>) => void;
   removeWidget: (id: string) => void;
@@ -34,24 +37,30 @@ interface AetherStore {
 
 export const useAetherStore = create<AetherStore>((set) => ({
   widgets: [],
-  focusedWidgetId: null,
-  setWidgets: (widgets) => set((state) => ({
+  openWidgetIds: [],
+  setWidgets: (widgets) => set({
     widgets,
-    focusedWidgetId: state.focusedWidgetId ?? widgets[0]?.id ?? null,
+    openWidgetIds: widgets.filter((w) => !w.minimized).map((w) => w.id),
+  }),
+  openWidget: (id) => set((state) => {
+    if (state.openWidgetIds.includes(id)) return state;
+    return { openWidgetIds: [...state.openWidgetIds, id] };
+  }),
+  closeAllToMiniatures: () => set({ openWidgetIds: [] }),
+  closeWindowToMiniature: (id) => set((state) => ({
+    openWidgetIds: state.openWidgetIds.filter((x) => x !== id),
   })),
-  setFocusedWidget: (id) => set({ focusedWidgetId: id }),
   addWidget: (widget) => set((state) => ({
     widgets: [...state.widgets, widget],
-    focusedWidgetId: widget.id,
+    openWidgetIds: [...state.openWidgetIds, widget.id],
   })),
   updateWidget: (id, updates) => set((state) => ({
     widgets: state.widgets.map((w) => (w.id === id ? { ...w, ...updates } : w)),
   })),
-  removeWidget: (id) => set((state) => {
-    const next = state.widgets.filter((w) => w.id !== id);
-    const nextFocused = state.focusedWidgetId === id ? (next[0]?.id ?? null) : state.focusedWidgetId;
-    return { widgets: next, focusedWidgetId: nextFocused };
-  }),
+  removeWidget: (id) => set((state) => ({
+    widgets: state.widgets.filter((w) => w.id !== id),
+    openWidgetIds: state.openWidgetIds.filter((x) => x !== id),
+  })),
   activePrompt: '',
   setActivePrompt: (prompt) => set({ activePrompt: prompt }),
   generativePreviewEnabled: true,
