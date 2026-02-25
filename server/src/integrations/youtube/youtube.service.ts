@@ -1,5 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+
+interface CacheEntry<T> {
+  data: T;
+  expiresAt: number;
+}
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_CACHE_SIZE = 500;
 
 export interface YoutubeVideo {
   videoId: string;
@@ -35,8 +43,10 @@ interface YtSearchResponse {
 
 @Injectable()
 export class YoutubeService {
+  private readonly logger = new Logger(YoutubeService.name);
   private readonly apiKey: string;
   private readonly baseUrl = 'https://www.googleapis.com/youtube/v3';
+  private readonly cache = new Map<string, CacheEntry<unknown>>();
 
   constructor(private readonly config: ConfigService) {
     this.apiKey = this.config.get<string>('YOUTUBE_API_KEY', '');
@@ -105,12 +115,34 @@ export class YoutubeService {
   }
 
   private async get<T>(url: string): Promise<T> {
+    const cacheKey = url.replace(/([?&])key=[^&]*/g, '');
+
+    const cached = this.cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.logger.debug(`Cache HIT: ${cacheKey.split('?')[0]}`);
+      return cached.data as T;
+    }
+
+    this.logger.debug(`Cache MISS: ${cacheKey.split('?')[0]} — calling YouTube API`);
+
     const res = await fetch(url);
     const data = (await res.json()) as T & { error?: { message: string } };
     if (!res.ok) {
       throw new Error((data as { error?: { message: string } }).error?.message ?? res.statusText);
     }
+
+    this.cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+    this.evictExpired();
+
     return data;
+  }
+
+  private evictExpired(): void {
+    if (this.cache.size <= MAX_CACHE_SIZE) return;
+    const now = Date.now();
+    for (const [key, entry] of this.cache) {
+      if (entry.expiresAt <= now) this.cache.delete(key);
+    }
   }
 
   private mapVideo(item: YtSearchItem, videoId: string): YoutubeVideo {
