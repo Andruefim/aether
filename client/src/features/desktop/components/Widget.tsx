@@ -17,10 +17,6 @@ export type WidgetProps = {
   miniatureHeight?: number;
 };
 
-/**
- * Ask the server to generate + persist a preview, then update local store.
- * Single request — the server saves to DB internally.
- */
 async function requestPreview(widgetId: string, widgetUserPrompt: string): Promise<void> {
   try {
     const res = await fetch('/api/generate/preview', {
@@ -31,10 +27,9 @@ async function requestPreview(widgetId: string, widgetUserPrompt: string): Promi
     if (!res.ok) return;
     const { html } = (await res.json()) as { html: string };
     if (!html) return;
-    // Update local store so miniature re-renders immediately without page reload
     useAetherStore.getState().updateWidget(widgetId, { preview_html: html });
   } catch {
-    // Preview is non-critical — silently ignore failures
+    // non-critical
   }
 }
 
@@ -84,13 +79,13 @@ export const Widget: React.FC<WidgetProps> = ({
       });
   }, [isFocused, data.html, data.isGenerating, data.id]);
 
-  // Trigger preview generation once the widget finishes generating and has no preview yet
+  // Trigger preview generation once widget finishes and has no preview yet
   useEffect(() => {
     if (data.isGenerating) return;
     if (!cleanHtml) return;
     if (data.preview_html) return;
     requestPreview(data.id, data.user_prompt);
-  }, [data.isGenerating, data.id, data.preview_html, cleanHtml]);
+  }, [data.isGenerating, data.id, data.preview_html, cleanHtml, data.user_prompt]);
 
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
@@ -159,7 +154,7 @@ export const Widget: React.FC<WidgetProps> = ({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); closeWidget(e); }}
-          className="absolute top-1 right-1 z-20 p-1 rounded-md bg-black/50 text-white/70 hover:text-red-400 hover:bg-black/70 transition-colors"
+          className="absolute top-1 right-1 z-20 p-1 rounded-md bg-black/20 text-white/70 hover:text-red-400 hover:bg-black/40 transition-colors"
           aria-label="Close widget"
         >
           <X size={12} />
@@ -176,7 +171,7 @@ export const Widget: React.FC<WidgetProps> = ({
           </div>
         </div>
       )}
-      <div className={`w-full h-full min-w-[200px] min-h-[100px] rounded-2xl overflow-hidden relative ${data.isGenerating ? 'bg-white/5 border border-white/10 backdrop-blur-xl' : 'bg-white/15 backdrop-blur-xl border border-white/10'}`}>
+      <div className={`w-full h-full min-w-[200px] min-h-[100px] overflow-hidden relative ${data.isGenerating ? 'rounded-2xl bg-white/5 border border-white/10 backdrop-blur-xl' : isMiniature ? 'rounded-2xl bg-white/10 backdrop-blur-2xl border border-white/25 shadow-[inset_0_1px_1px_rgba(255,255,255,0.4),0_2px_12px_rgba(0,0,0,0.08)]' : 'rounded-2xl bg-white/15 backdrop-blur-xl border border-white/10'}`}>
         {data.isGenerating ? (
           <div className="w-full h-full flex flex-col min-h-0">
             {generativePreviewEnabled && data.html ? (
@@ -195,17 +190,28 @@ export const Widget: React.FC<WidgetProps> = ({
             </label>
           </div>
         ) : isMiniature ? (
-          <div className="w-full h-full overflow-hidden pointer-events-none" aria-hidden>
+          // Miniature: CSS glass only — no WebGL
+          <div className="w-full h-full pointer-events-none">
             {data.preview_html ? (
-              <iframe scrolling="no"
+              <iframe
                 srcDoc={data.preview_html}
-                sandbox="allow-same-origin"
+                sandbox="allow-scripts allow-same-origin"
+                scrolling="no"
                 title={data.user_prompt}
-                style={{ width: miniatureWidth, height: miniatureHeight, border: 'none', overflow: 'hidden', display: 'block' }}
+                style={{
+                  width: miniatureWidth,
+                  height: miniatureHeight,
+                  border: 'none',
+                  overflow: 'hidden',
+                  display: 'block',
+                  background: 'transparent',
+                }}
               />
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-white/40 text-xs px-3 text-center select-none animate-pulse">
-                {data.user_prompt}
+              <div className="w-full h-full flex items-center justify-center px-4">
+                <span className="text-white/40 text-[11px] font-light tracking-wide text-center leading-snug select-none">
+                  {data.user_prompt}
+                </span>
               </div>
             )}
           </div>
