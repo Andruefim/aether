@@ -17,6 +17,22 @@ export type WidgetProps = {
   miniatureHeight?: number;
 };
 
+async function requestPreview(widgetId: string, widgetUserPrompt: string): Promise<void> {
+  try {
+    const res = await fetch('/api/generate/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ widgetId, userPrompt: widgetUserPrompt }),
+    });
+    if (!res.ok) return;
+    const { html } = (await res.json()) as { html: string };
+    if (!html) return;
+    useAetherStore.getState().updateWidget(widgetId, { preview_html: html });
+  } catch {
+    // non-critical
+  }
+}
+
 export const Widget: React.FC<WidgetProps> = ({
   data,
   mode,
@@ -34,13 +50,17 @@ export const Widget: React.FC<WidgetProps> = ({
   const dragControls = useDragControls();
   const [isDragging, setIsDragging] = useState(false);
   const isFocused = mode === 'focused';
-  const isMiniaure = mode === 'miniature';
+  const isMiniature = mode === 'miniature';
 
+  const cleanHtml = data.html ? stripMarkdownCodeFence(data.html) : '';
+
+  // Inject + execute widget scripts only when focused
   useEffect(() => {
+    if (!isFocused) return;
     if (data.isGenerating || !data.html || !containerRef.current) return;
     const el = containerRef.current;
     el.innerHTML = '';
-    el.innerHTML = stripMarkdownCodeFence(data.html);
+    el.innerHTML = cleanHtml;
     fetch(`/api/widgets/${data.id}/data`)
       .then((res) => res.json())
       .then((initialData) => {
@@ -57,12 +77,19 @@ export const Widget: React.FC<WidgetProps> = ({
           el.appendChild(newScript);
         });
       });
-  }, [data.html, data.isGenerating, data.id]);
+  }, [isFocused, data.html, data.isGenerating, data.id]);
+
+  // Trigger preview generation once widget finishes and has no preview yet
+  useEffect(() => {
+    if (data.isGenerating) return;
+    if (!cleanHtml) return;
+    if (data.preview_html) return;
+    requestPreview(data.id, data.user_prompt);
+  }, [data.isGenerating, data.id, data.preview_html, cleanHtml, data.user_prompt]);
 
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       if (e.data?.widgetId !== data.id) return;
-
       if (e.data?.type === 'save') {
         fetch(`/api/widgets/${data.id}/data`, {
           method: 'POST',
@@ -80,7 +107,6 @@ export const Widget: React.FC<WidgetProps> = ({
         });
       }
     };
-
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, [data.id]);
@@ -103,15 +129,8 @@ export const Widget: React.FC<WidgetProps> = ({
     fetch(`/api/widgets/${data.id}`, { method: 'DELETE' });
   };
 
-  const focusThisWidget = () => {
-    if (isMiniaure) setFocusedWidget(data.id);
-  };
-
   const blurAmount = data.isGenerating ? Math.max(0, 16 - (data.progress || 0) * 16) : 0;
   const opacity = data.isGenerating ? (data.progress || 0) : 1;
-
-  const width = isFocused ? '100%' : miniatureWidth;
-  const height = isFocused ? '100%' : miniatureHeight;
 
   return (
     <motion.div
@@ -120,29 +139,22 @@ export const Widget: React.FC<WidgetProps> = ({
       dragListener={false}
       onDragStart={() => isFocused && setIsDragging(true)}
       onDragEnd={handleDragEnd}
-      initial={isMiniaure ? false : { scale: 0.9, opacity: 0 }}
-      animate={{
-        scale: 1,
-        opacity,
-        filter: `blur(${blurAmount}px)`,
-      }}
+      initial={isMiniature ? false : { scale: 0.9, opacity: 0 }}
+      animate={{ scale: 1, opacity, filter: `blur(${blurAmount}px)` }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      className={`relative rounded-2xl overflow-hidden shrink-0 ${isMiniaure ? 'cursor-pointer' : ''}`}
+      className={`relative rounded-2xl overflow-hidden shrink-0 ${isMiniature ? 'cursor-pointer' : ''}`}
       style={{
-        width,
-        height,
+        width: isFocused ? '100%' : miniatureWidth,
+        height: isFocused ? '100%' : miniatureHeight,
         transformOrigin: 'center center',
       }}
-      onClick={isMiniaure ? focusThisWidget : undefined}
+      onClick={isMiniature ? () => setFocusedWidget(data.id) : undefined}
     >
-      {isMiniaure && (
+      {isMiniature && (
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            closeWidget(e);
-          }}
-          className="absolute top-1 right-1 z-20 p-1 rounded-md bg-black/50 text-white/70 hover:text-red-400 hover:bg-black/70 transition-colors"
+          onClick={(e) => { e.stopPropagation(); closeWidget(e); }}
+          className="absolute top-1 right-1 z-20 p-1 rounded-md bg-black/20 text-white/70 hover:text-red-400 hover:bg-black/40 transition-colors"
           aria-label="Close widget"
         >
           <X size={12} />
@@ -150,65 +162,64 @@ export const Widget: React.FC<WidgetProps> = ({
       )}
       {isFocused && !data.isGenerating && (
         <div className="absolute inset-0 pointer-events-none z-10 rounded-2xl">
-          {/* 10px invisible drag frame */}
-          <div
-            className="absolute top-0 left-0 right-0 h-[10px] cursor-grab active:cursor-grabbing rounded-t-2xl pointer-events-auto"
-            onPointerDown={(e) => dragControls.start(e)}
-          />
-          <div
-            className="absolute top-[10px] right-0 w-[10px] bottom-[10px] cursor-grab active:cursor-grabbing pointer-events-auto"
-            onPointerDown={(e) => dragControls.start(e)}
-          />
-          <div
-            className="absolute bottom-0 left-0 right-0 h-[10px] cursor-grab active:cursor-grabbing rounded-b-2xl pointer-events-auto"
-            onPointerDown={(e) => dragControls.start(e)}
-          />
-          <div
-            className="absolute top-[10px] left-0 w-[10px] bottom-[10px] cursor-grab active:cursor-grabbing rounded-l-2xl pointer-events-auto"
-            onPointerDown={(e) => dragControls.start(e)}
-          />
-          <div className="absolute top-[10px] left-[10px] right-[10px] bottom-[10px] pointer-events-none" aria-hidden />
+          <div className="absolute top-0 left-0 right-0 h-[10px] cursor-grab active:cursor-grabbing rounded-t-2xl pointer-events-auto" onPointerDown={(e) => dragControls.start(e)} />
+          <div className="absolute top-[10px] right-0 w-[10px] bottom-[10px] cursor-grab active:cursor-grabbing pointer-events-auto" onPointerDown={(e) => dragControls.start(e)} />
+          <div className="absolute bottom-0 left-0 right-0 h-[10px] cursor-grab active:cursor-grabbing rounded-b-2xl pointer-events-auto" onPointerDown={(e) => dragControls.start(e)} />
+          <div className="absolute top-[10px] left-0 w-[10px] bottom-[10px] cursor-grab active:cursor-grabbing rounded-l-2xl pointer-events-auto" onPointerDown={(e) => dragControls.start(e)} />
           <div className="absolute -top-10 left-0 right-0 h-10 flex items-center px-4 text-white/50 text-xs font-mono truncate max-w-[200px] pointer-events-none">
             {data.user_prompt}
           </div>
         </div>
       )}
-      <div
-        className={`w-full h-full min-w-[200x] min-h-[100px] align-middle rounded-2xl overflow-hidden relative ${data.isGenerating ? 'bg-white/5 border border-white/10 backdrop-blur-xl' : 'bg-white/15 backdrop-blur-xl border border-white/10'}`}
-      >
+      <div className={`w-full h-full min-w-[200px] min-h-[100px] overflow-hidden relative ${data.isGenerating ? 'rounded-2xl bg-white/5 border border-white/10 backdrop-blur-xl' : isMiniature ? 'rounded-2xl bg-white/10 backdrop-blur-2xl border border-white/25 shadow-[inset_0_1px_1px_rgba(255,255,255,0.4),0_2px_12px_rgba(0,0,0,0.08)]' : 'rounded-2xl bg-white/15 backdrop-blur-xl border border-white/10'}`}>
         {data.isGenerating ? (
           <div className="w-full h-full flex flex-col min-h-0">
             {generativePreviewEnabled && data.html ? (
-              <WidgetPreview
-                html={stripMarkdownCodeFence(data.html)}
-                className="flex-1 min-h-0 w-full"
-              />
+              <WidgetPreview html={stripMarkdownCodeFence(data.html)} className="flex-1 min-h-0 w-full" />
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center text-white/50 font-mono text-sm">
                 <div className="mb-4">Crystallizing...</div>
                 <div className="w-32 h-1 bg-white/10 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-500 transition-all duration-200"
-                    style={{ width: `${(data.progress || 0) * 100}%` }}
-                  />
+                  <div className="h-full bg-indigo-500 transition-all duration-200" style={{ width: `${(data.progress || 0) * 100}%` }} />
                 </div>
               </div>
             )}
             <label className="flex items-center gap-2 px-3 py-2 text-white/50 text-xs border-t border-white/10 shrink-0">
-              <input
-                type="checkbox"
-                checked={generativePreviewEnabled}
-                onChange={(e) => setGenerativePreviewEnabled(e.target.checked)}
-                className="rounded border-white/30 bg-white/10"
-              />
+              <input type="checkbox" checked={generativePreviewEnabled} onChange={(e) => setGenerativePreviewEnabled(e.target.checked)} className="rounded border-white/30 bg-white/10" />
               <span>Live HTML preview</span>
             </label>
+          </div>
+        ) : isMiniature ? (
+          // Miniature: CSS glass only — no WebGL
+          <div className="w-full h-full pointer-events-none">
+            {data.preview_html ? (
+              <iframe
+                srcDoc={data.preview_html}
+                sandbox="allow-scripts allow-same-origin"
+                scrolling="no"
+                title={data.user_prompt}
+                style={{
+                  width: miniatureWidth,
+                  height: miniatureHeight,
+                  border: 'none',
+                  overflow: 'hidden',
+                  display: 'block',
+                  background: 'transparent',
+                }}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center px-4">
+                <span className="text-white/40 text-[11px] font-light tracking-wide text-center leading-snug select-none">
+                  {data.user_prompt}
+                </span>
+              </div>
+            )}
           </div>
         ) : (
           <div
             ref={containerRef}
             data-widget-id={data.id}
-            className={`w-full h-full border-none bg-transparent overflow-auto widget-content ${isMiniaure ? 'pointer-events-none' : 'pointer-events-auto'}`}
+            className="w-full h-full border-none bg-transparent overflow-auto widget-content pointer-events-auto"
             aria-label={data.user_prompt}
           />
         )}

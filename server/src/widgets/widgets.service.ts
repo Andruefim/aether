@@ -10,6 +10,7 @@ export interface WidgetResponse {
   id: string;
   user_prompt: string;
   html: string;
+  preview_html: string | null;
   position_x: number;
   position_y: number;
   width: number;
@@ -40,6 +41,7 @@ export class WidgetsService {
       id: dto.id,
       user_prompt: dto.user_prompt,
       html: '',
+      preview_html: null,
       position_x: dto.position_x ?? 0,
       position_y: dto.position_y ?? 0,
       width: 400,
@@ -68,6 +70,14 @@ export class WidgetsService {
     return { success: true };
   }
 
+  async setPreview(id: string, html: string): Promise<{ success: boolean }> {
+    const widget = await this.widgetRepo.findOne({ where: { id } });
+    if (!widget) throw new NotFoundException('Widget not found');
+    widget.preview_html = html;
+    await this.widgetRepo.save(widget);
+    return { success: true };
+  }
+
   async remove(id: string): Promise<{ success: boolean }> {
     await this.widgetDataRepo.delete({ widget_id: id });
     const result = await this.widgetRepo.delete(id);
@@ -78,15 +88,11 @@ export class WidgetsService {
   async getData(id: string): Promise<Record<string, unknown>> {
     const exists = await this.widgetRepo.exists({ where: { id } });
     if (!exists) throw new NotFoundException('Widget not found');
-
     const rows = await this.widgetDataRepo.find({ where: { widget_id: id } });
     const data: Record<string, unknown> = {};
     for (const row of rows) {
-      try {
-        data[row.key] = JSON.parse(row.value);
-      } catch {
-        data[row.key] = row.value;
-      }
+      try { data[row.key] = JSON.parse(row.value); }
+      catch { data[row.key] = row.value; }
     }
     return data;
   }
@@ -94,7 +100,6 @@ export class WidgetsService {
   async setData(id: string, body: Record<string, unknown>): Promise<{ success: boolean }> {
     const exists = await this.widgetRepo.exists({ where: { id } });
     if (!exists) throw new NotFoundException('Widget not found');
-
     for (const [key, value] of Object.entries(body)) {
       await this.widgetDataRepo.upsert(
         { widget_id: id, key, value: JSON.stringify(value) },
@@ -109,6 +114,7 @@ export class WidgetsService {
       id: row.id,
       user_prompt: row.user_prompt,
       html: row.html,
+      preview_html: row.preview_html ?? null,
       position_x: Number(row.position_x),
       position_y: Number(row.position_y),
       width: Number(row.width),
