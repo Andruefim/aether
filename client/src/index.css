@@ -1,6 +1,6 @@
 /* Explicit source so Tailwind scans all of src (fixes styles in Aether when run from repo root) */
 @import "tailwindcss";
-@source "./";
+@source "../src";
 
 /* Hide scrollbars on widget content (scroll still works via wheel/touch) */
 .widget-content {

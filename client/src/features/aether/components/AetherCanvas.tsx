@@ -9,48 +9,62 @@ export interface AetherCanvasHandle {
 }
 
 /**
- * Full-screen container that renders the live Aether interface.
- *
- * Uses morphdom for DOM diffing when available.
- * Falls back to safe innerHTML injection.
- * Scripts are re-executed on each full replacement.
+ * Full-screen container that renders the live Aether interface inside a Shadow DOM.
+ * Shadow DOM fully isolates injected CSS from the parent page —
+ * global resets like `* { margin: 0 }` inside generated HTML won't affect
+ * ModeSwitch, InputBar, or any other parent components.
  */
 export const AetherCanvas = forwardRef<AetherCanvasHandle>((_, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const shadowRef = useRef<ShadowRoot | null>(null);
   const lastAppliedRef = useRef<string>('');
   const aetherHtml = useAetherStore((s) => s.aetherHtml);
   const aetherIsGenerating = useAetherStore((s) => s.aetherIsGenerating);
 
-  // Expose imperative handle for parent
-  useImperativeHandle(ref, () => ({
-    applyHtml: (html: string) => injectHtml(html),
-    getElement: () => containerRef.current,
-  }));
+  // Attach Shadow DOM once on mount
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || shadowRef.current) return;
+    shadowRef.current = el.attachShadow({ mode: 'open' });
+    const initial = useAetherStore.getState().aetherHtml || INITIAL_AETHER_HTML;
+    injectHtml(initial);
+  }, []);
 
   function injectHtml(html: string) {
-    const el = containerRef.current;
-    if (!el || !html) return;
+    if (!html) return;
     if (lastAppliedRef.current === html) return;
     lastAppliedRef.current = html;
 
-    // Try morphdom first for minimal DOM updates
-    applyWithMorphdomOrInnerHtml(el, html);
+    const shadow = shadowRef.current;
+    if (!shadow) return;
+
+    // Parse the full HTML document
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+
+    // Build shadow content: all <style> tags + body innerHTML
+    const styles = Array.from(doc.querySelectorAll('style'))
+      .map((s) => s.outerHTML)
+      .join('\n');
+    const bodyContent = doc.body.innerHTML;
+
+    shadow.innerHTML = styles + bodyContent;
+
+    // Re-execute scripts (innerHTML doesn't run them)
+    reRunScripts(shadow);
   }
 
-  // When generation is complete (not generating), apply the final HTML via morphdom
+  // Apply final HTML when generation completes
   useEffect(() => {
     if (!aetherIsGenerating && aetherHtml) {
       injectHtml(stripMarkdownCodeFence(aetherHtml));
     }
   }, [aetherIsGenerating, aetherHtml]);
 
-  // Initialize with default HTML on first mount
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const initial = useAetherStore.getState().aetherHtml || INITIAL_AETHER_HTML;
-    injectHtml(initial);
-  }, []);
+  useImperativeHandle(ref, () => ({
+    applyHtml: (html: string) => injectHtml(html),
+    getElement: () => containerRef.current,
+  }));
 
   return (
     <div
@@ -63,55 +77,13 @@ export const AetherCanvas = forwardRef<AetherCanvasHandle>((_, ref) => {
 
 AetherCanvas.displayName = 'AetherCanvas';
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-async function applyWithMorphdomOrInnerHtml(container: HTMLDivElement, html: string) {
-  try {
-    const { default: morphdom } = await import('morphdom');
-
-    // Wrap in a div for morphdom comparison
-    const wrapper = document.createElement('div');
-    wrapper.innerHTML = html;
-
-    morphdom(container, wrapper, {
-      childrenOnly: true,
-      onBeforeElUpdated(fromEl, toEl) {
-        // Don't update identical nodes
-        if (fromEl.isEqualNode(toEl)) return false;
-        // Preserve focused inputs
-        if (
-          (fromEl.tagName === 'INPUT' || fromEl.tagName === 'TEXTAREA' || fromEl.tagName === 'SELECT') &&
-          document.activeElement === fromEl
-        ) {
-          return false;
-        }
-        return true;
-      },
-    });
-
-    // Re-run scripts that morphdom skipped
-    reRunScripts(container);
-  } catch {
-    // morphdom not available — safe HTML injection
-    injectSafe(container, html);
-  }
-}
-
-function injectSafe(container: HTMLDivElement, html: string) {
-  container.innerHTML = '';
-  container.innerHTML = html;
-  reRunScripts(container);
-}
-
-function reRunScripts(container: HTMLElement) {
-  // Re-execute scripts because innerHTML doesn't run them
-  container.querySelectorAll('script').forEach((oldScript) => {
-    if (oldScript.src) return; // external scripts: skip (already loaded)
+function reRunScripts(root: ShadowRoot) {
+  root.querySelectorAll('script').forEach((oldScript) => {
+    if (oldScript.src) return;
     const newScript = document.createElement('script');
     newScript.textContent = (oldScript.textContent ?? '')
       .replace(/\bconst\s+/g, 'var ')
       .replace(/\blet\s+/g, 'var ');
-    // Replace in-place so it runs
     oldScript.replaceWith(newScript);
   });
 }
