@@ -98,17 +98,38 @@ export function Widget({
       className={`relative rounded-2xl overflow-hidden shrink-0 ${isMiniature ? 'cursor-pointer' : ''}`}
       onClick={isMiniature ? handleMiniatureClick : undefined}
     >
-      {isMiniature && <WidgetMiniatureCloseButton onClose={closeWidget} />}
       {isFocused && !data.isGenerating && (
         <WidgetWindowChrome
           title={data.user_prompt}
-          onMinimize={minimizeWindow}
           dragControls={dragControls}
         />
       )}
       <div
-        className={`w-full h-full min-w-[160px] min-h-[120px] overflow-hidden relative ${contentBoxClassName}`}
+        className={`w-full h-full min-w-[160px] min-h-[120px] overflow-hidden relative ${contentBoxClassName} ${isFocused && !data.isGenerating ? 'pt-3' : ''}`}
       >
+        {!data.isGenerating && (
+          <div className="absolute top-[1px] left-[10px] flex items-center gap-[6px] z-20">
+            <button
+              type="button"
+              onClick={closeWidget}
+              className="h-[10px] w-[10px] rounded-full border border-white/40 shadow-sm hover:brightness-110 transition bg-[#ff5f57]/70"
+              aria-label="Close widget"
+              style={{ cursor: 'pointer', zIndex: 1000 }}
+              title="Close widget"
+            />
+
+            {!isMiniature && (
+              <button
+                type="button"
+                onClick={minimizeWindow}
+                className="h-[10px] w-[10px] rounded-full border border-white/40 shadow-sm hover:brightness-110 transition bg-[#f5c04a]/70"
+                aria-label="Minimize widget"
+                style={{ cursor: 'pointer', zIndex: 1000 }}
+                title="Minimize widget"
+              />
+            )}
+          </div>
+        )}
         {data.isGenerating ? (
           <WidgetGeneratingContent
             html={data.html}
