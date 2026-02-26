@@ -18,7 +18,7 @@ RULES:
 - Buttons/inputs: bg rgba(255,255,255,0.15), border rgba(255,255,255,0.15), hover slightly brighter
 - Size: minimum width 250px, minimum youtube widget width 600px
 - For saving data: window.parent.postMessage({type:'save', widgetId:window.__CURRENT_WIDGET_ID__, data:{...}}, '*')
-- For closing: window.parent.postMessage({type:'close', widgetId:window.__CURRENT_WIDGET_ID__}, '*')
+- For closing: window.parent.postMessage({type:'close', widgetId:window.__CURRENT_WIDGET_ID__}, '*') (do not display close button in the widget)
 - For loading initial data: use window.__WIDGET_INIT__ (object, available as soon as script runs)
 - Never use window.alert(), window.confirm(), or window.prompt(). Show all messages, errors, and feedback inside the widget.
 - Never use DOMContentLoaded or window.onload — call functions directly at the end of the <script> tag.
