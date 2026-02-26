@@ -1,1 +1,1 @@
-export { useAetherStore, type WidgetData } from './store';
+export { useAetherStore, type WidgetData, type AetherMessage, type AppMode } from './store';

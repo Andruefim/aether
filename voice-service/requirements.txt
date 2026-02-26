@@ -1,0 +1,17 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+pydantic>=2.0.0
+
+# STT
+faster-whisper>=1.0.3
+
+# TTS
+# Coqui TTS — install from PyPI (make sure torch is installed first)
+coqui-tts>=0.25.3
+
+# GPU support (optional — comment out if CPU only)
+# torch and torchaudio should be installed separately with the correct CUDA version:
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+python-dotenv>=1.0.0

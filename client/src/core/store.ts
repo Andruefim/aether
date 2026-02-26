@@ -17,7 +17,20 @@ export interface WidgetData {
   preview_html: string | null;
 }
 
+export interface AetherMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+}
+
+export type AppMode = 'desktop' | 'aether';
+
 interface AetherStore {
+  // ── App mode ──────────────────────────────────────────────────────────────
+  appMode: AppMode;
+  setAppMode: (mode: AppMode) => void;
+
+  // ── Desktop ───────────────────────────────────────────────────────────────
   widgets: WidgetData[];
   /** IDs of widgets shown as windows (order = z-order, last = on top). */
   openWidgetIds: string[];
@@ -30,12 +43,47 @@ interface AetherStore {
   removeWidget: (id: string) => void;
   activePrompt: string;
   setActivePrompt: (prompt: string) => void;
-  /** When true, show live HTML preview (no scripts) during generation; when false, show "Crystallizing..." progress. */
   generativePreviewEnabled: boolean;
   setGenerativePreviewEnabled: (value: boolean) => void;
+
+  // ── Aether ────────────────────────────────────────────────────────────────
+  /** Current live HTML displayed in AetherCanvas */
+  aetherHtml: string;
+  /** Previous stable HTML — fallback if generation breaks */
+  aetherPreviousHtml: string;
+  /** Conversation history sent to orchestrator */
+  aetherHistory: AetherMessage[];
+  /** Generation in progress */
+  aetherIsGenerating: boolean;
+  /** Microphone is actively recording */
+  aetherIsListening: boolean;
+  /** XTTS is speaking */
+  aetherIsSpeaking: boolean;
+  /** Status text shown in AetherStatus bar */
+  aetherStatus: string | null;
+  /** Timestamp for WebGL pulse trigger */
+  aetherPulseAt: number | null;
+  /** Last route decision from orchestrator */
+  aetherLastAction: 'generate_ui' | 'dialogue' | 'tool' | null;
+
+  setAetherHtml: (html: string) => void;
+  setAetherPreviousHtml: (html: string) => void;
+  pushAetherMessage: (msg: AetherMessage) => void;
+  setAetherIsGenerating: (v: boolean) => void;
+  setAetherIsListening: (v: boolean) => void;
+  setAetherIsSpeaking: (v: boolean) => void;
+  setAetherStatus: (status: string | null) => void;
+  triggerAetherPulse: () => void;
+  setAetherLastAction: (action: 'generate_ui' | 'dialogue' | 'tool' | null) => void;
+  revertAetherHtml: () => void;
 }
 
 export const useAetherStore = create<AetherStore>((set) => ({
+  // ── App mode ──────────────────────────────────────────────────────────────
+  appMode: 'desktop',
+  setAppMode: (mode) => set({ appMode: mode }),
+
+  // ── Desktop ───────────────────────────────────────────────────────────────
   widgets: [],
   openWidgetIds: [],
   setWidgets: (widgets) => set({
@@ -65,4 +113,31 @@ export const useAetherStore = create<AetherStore>((set) => ({
   setActivePrompt: (prompt) => set({ activePrompt: prompt }),
   generativePreviewEnabled: true,
   setGenerativePreviewEnabled: (value) => set({ generativePreviewEnabled: value }),
+
+  // ── Aether ────────────────────────────────────────────────────────────────
+  aetherHtml: '',
+  aetherPreviousHtml: '',
+  aetherHistory: [],
+  aetherIsGenerating: false,
+  aetherIsListening: false,
+  aetherIsSpeaking: false,
+  aetherStatus: null,
+  aetherPulseAt: null,
+  aetherLastAction: null,
+
+  setAetherHtml: (html) => set({ aetherHtml: html }),
+  setAetherPreviousHtml: (html) => set({ aetherPreviousHtml: html }),
+  pushAetherMessage: (msg) => set((state) => ({
+    aetherHistory: [...state.aetherHistory.slice(-19), msg], // keep last 20 messages
+  })),
+  setAetherIsGenerating: (v) => set({ aetherIsGenerating: v }),
+  setAetherIsListening: (v) => set({ aetherIsListening: v }),
+  setAetherIsSpeaking: (v) => set({ aetherIsSpeaking: v }),
+  setAetherStatus: (status) => set({ aetherStatus: status }),
+  triggerAetherPulse: () => set({ aetherPulseAt: Date.now() }),
+  setAetherLastAction: (action) => set({ aetherLastAction: action }),
+  revertAetherHtml: () => set((state) => ({
+    aetherHtml: state.aetherPreviousHtml,
+    aetherStatus: null,
+  })),
 }));

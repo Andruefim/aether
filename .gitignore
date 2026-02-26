@@ -10,3 +10,5 @@ coverage/
 aether.db
 
 .cursor/
+
+voice-service/.venv

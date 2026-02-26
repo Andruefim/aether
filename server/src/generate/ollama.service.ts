@@ -6,6 +6,8 @@ export interface OllamaMessage {
   content: string;
   tool_calls?: OllamaToolCall[];
   tool_name?: string;
+  /** Base64-encoded images (without data: prefix) for vision models */
+  images?: string[];
 }
 
 export interface OllamaToolCall {
@@ -31,23 +33,24 @@ export interface OllamaTool {
 @Injectable()
 export class OllamaService {
   private readonly baseUrl: string;
-  private readonly model: string;
+  readonly defaultModel: string;
 
   constructor(private readonly config: ConfigService) {
     this.baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
-    this.model = this.config.get<string>('OLLAMA_MODEL', 'qwen3-coder:30b');
+    this.defaultModel = this.config.get<string>('OLLAMA_MODEL', 'qwen3-coder:30b');
   }
 
   /** Non-streaming single turn — used for the agentic tool-call loop. */
   async chat(
     messages: OllamaMessage[],
     tools?: OllamaTool[],
+    model?: string,
   ): Promise<OllamaMessage> {
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: this.model,
+        model: model ?? this.defaultModel,
         messages,
         tools,
         stream: false,
@@ -64,20 +67,24 @@ export class OllamaService {
   async *streamGenerate(
     prompt: string,
     systemInstruction: string,
+    model?: string,
   ): AsyncGenerator<string> {
-    yield* this.streamMessages([
-      { role: 'system', content: systemInstruction },
-      { role: 'user', content: prompt },
-    ]);
+    yield* this.streamMessages(
+      [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: prompt },
+      ],
+      model,
+    );
   }
 
   /** Streaming from an arbitrary message history — used after the tool loop. */
-  async *streamMessages(messages: OllamaMessage[]): AsyncGenerator<string> {
+  async *streamMessages(messages: OllamaMessage[], model?: string): AsyncGenerator<string> {
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: this.model,
+        model: model ?? this.defaultModel,
         messages,
         stream: true,
         options: { temperature: 0.2 },

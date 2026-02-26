@@ -8,6 +8,7 @@ import { Widget } from './widgets/entities/widget.entity';
 import { WidgetData } from './widgets/entities/widget-data.entity';
 import { WebSearchModule } from './web-search/web-search.module';
 import { IntegrationsModule } from './integrations/integrations.module';
+import { AetherModule } from './aether/aether.module';
 
 const rootEnvPath = join(__dirname, '..', '..', '.env');
 
@@ -35,6 +36,7 @@ const rootEnvPath = join(__dirname, '..', '..', '.env');
     GenerateModule,
     WebSearchModule,
     IntegrationsModule,
+    AetherModule,
   ],
 })
 export class AppModule {}

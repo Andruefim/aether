@@ -5,7 +5,8 @@
   "type": "module",
   "workspaces": ["client", "server"],
   "scripts": {
-    "dev": "concurrently -n server,client \"npm run start:dev -w server\" \"npm run dev -w client\"",
+    "dev": "concurrently -n server,client,voice \"npm run start:dev -w server\" \"npm run dev -w client\" \"npm run dev:voice\"",
+    "dev:voice": "cd voice-service && .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001 --reload",
     "dev:client": "npm run dev -w client",
     "dev:server": "npm run start:dev -w server",
     "build": "npm run build -w client && npm run build -w server",
