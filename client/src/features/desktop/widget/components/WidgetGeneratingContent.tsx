@@ -1,5 +1,5 @@
 import React from 'react';
-import { WidgetPreview } from '../../../preview';
+import { WidgetPreview } from './WidgetPreview';
 import { stripMarkdownCodeFence } from '../../../../shared';
 
 type Props = {

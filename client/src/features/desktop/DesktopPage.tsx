@@ -1,7 +1,7 @@
 import React from 'react';
 import { useAetherStore } from '../../core';
 import { useWidgetsLoad, useGenerate } from './hooks';
-import { WebGLBackground } from './components/WebGLBackground';
+import { WebGLBackground } from './components';
 import { Widget } from './components';
 import { InputBar } from './components/InputBar';
 import { motion, AnimatePresence } from 'motion/react';

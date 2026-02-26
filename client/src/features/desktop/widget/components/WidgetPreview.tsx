@@ -1,5 +1,5 @@
 import React from 'react';
-import { stripScriptsAndStyles } from '../../../shared';
+import { stripScriptsAndStyles } from '../../../../shared';
 
 export type WidgetPreviewProps = {
   /** Raw HTML from the stream (will be sanitized: no script/style). */
