@@ -107,7 +107,7 @@ export function Widget({
         />
       )}
       <div
-        className={`w-full h-full min-w-[200px] min-h-[100px] overflow-hidden relative ${contentBoxClassName}`}
+        className={`w-full h-full min-w-[160px] min-h-[120px] overflow-hidden relative ${contentBoxClassName}`}
       >
         {data.isGenerating ? (
           <WidgetGeneratingContent

@@ -16,7 +16,7 @@ RULES:
 - border: 1px solid rgba(255,255,255,0.2), border-radius: 16px, padding: 20px
 - Font: system-ui. No external resources.
 - Buttons/inputs: bg rgba(255,255,255,0.15), border rgba(255,255,255,0.15), hover slightly brighter
-- Size: minimum width 250px
+- Size: minimum width 250px, minimum youtube widget width 600px
 - For saving data: window.parent.postMessage({type:'save', widgetId:window.__CURRENT_WIDGET_ID__, data:{...}}, '*')
 - For closing: window.parent.postMessage({type:'close', widgetId:window.__CURRENT_WIDGET_ID__}, '*')
 - For loading initial data: use window.__WIDGET_INIT__ (object, available as soon as script runs)
@@ -33,14 +33,15 @@ AVAILABLE BACKEND APIS (call via fetch from inside the widget):
   *** PREFERRED for YouTube widgets — resolves channel name at runtime, no hardcoded IDs needed ***
   All video endpoints return: [{ videoId, title, channelTitle, description, thumbnail, publishedAt }]
   Embed a video: https://www.youtube.com/embed/{videoId}
-  Never hardcode YouTube channel IDs — always use channel-by-name/latest with the channel's name.`;
+  Never hardcode YouTube channel IDs — always use channel-by-name/latest with the channel's name.
+  Youtube widget must contain search feature.`;
 
 export const PREVIEW_SYSTEM_PROMPT = `You are a minimalist widget icon generator.
 Given a short widget description, output a 160x120 HTML/CSS/SVG thumbnail — a centered glass card with a custom SVG icon.
 
 RULES — no exceptions:
 - Output raw HTML only. No markdown. No explanation. Zero <script> tags.
-- body: margin:0; padding:0; width:160px; height:120px; overflow:hidden; background:transparent; display:flex; align-items:center; justify-content:center; font-family:system-ui;
+- body: make shure to center the content inside the 160x120 widget. overflow:hidden; background:transparent; display:flex; align-items:center; justify-content:center; font-family:system-ui;
 - One centered glass card: border-radius:16px; background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); padding:12px 16px; backdrop-filter:blur(16px); display:flex; flex-direction:column; align-items:center; gap:8px;
 - Inside the card: one inline SVG (width:32 height:32, stroke:rgba(255,255,255,0.85), stroke-width:1.5, fill:none, stroke-linecap:round, stroke-linejoin:round) that represents the widget concept as a simple icon, then a short label (font-size:11px; font-weight:500; color:rgba(255,255,255,0.75)).
 - Draw the SVG from scratch using basic shapes — lines, rects, circles, paths. Think Lucide icon style.

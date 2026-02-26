@@ -21,6 +21,8 @@ export function WidgetMiniatureContent({
           sandbox="allow-scripts allow-same-origin"
           scrolling="no"
           title={userPrompt}
+          marginWidth={0}
+          marginHeight={0}
           style={{
             width,
             height,
