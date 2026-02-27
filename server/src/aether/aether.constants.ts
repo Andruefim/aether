@@ -109,7 +109,7 @@ body {
   flex-direction: column; 
   gap: 20px; 
   align-items: center;
-  height: 100%;
+  height: 100vh;
   justify-content: center;
 }
 .title {

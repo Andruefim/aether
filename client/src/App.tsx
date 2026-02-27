@@ -4,12 +4,16 @@ import { useAetherStore } from './core';
 import { DesktopPage } from './features/desktop';
 import { AetherPage } from './features/aether';
 import { ModeSwitch } from './shared/ModeSwitch';
+import { WebGLBackground } from './shared/features/webgl-background';
 
 export default function App() {
   const appMode = useAetherStore((s) => s.appMode);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden">
+    <div className="relative w-screen h-screen overflow-hidden bg-[#ede6da]">
+      {/* Persistent WebGL background */}
+      <WebGLBackground />
+
       {/* Global mode switcher — always visible */}
       <ModeSwitch />
 
@@ -22,7 +26,7 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.25 }}
-            className="absolute inset-0"
+            className="absolute inset-0 z-10"
           >
             <DesktopPage />
           </motion.div>
@@ -33,7 +37,7 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.25 }}
-            className="absolute inset-0"
+            className="absolute inset-0 z-10"
           >
             <AetherPage />
           </motion.div>

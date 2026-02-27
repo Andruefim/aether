@@ -16,6 +16,8 @@ body {
 .container {
   text-align: center;
   display: flex; flex-direction: column; gap: 20px; align-items: center;
+  height: 100vh;
+  justify-content: center;
 }
 .title {
   font-size: 52px;

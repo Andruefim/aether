@@ -1,6 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { useAetherStore } from '../../core';
-import { WebGLBackground } from '../desktop';
 import { INITIAL_AETHER_HTML } from './constants';
 import {
   AetherCanvas,
@@ -53,10 +52,7 @@ export function AetherPage() {
   );
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#ede6da]">
-      {/* WebGL background — same as desktop */}
-      <WebGLBackground />
-
+    <div className="relative w-screen h-screen overflow-hidden">
       {/* Live interface canvas — z-10 */}
       <AetherCanvas ref={canvasRef} />
 

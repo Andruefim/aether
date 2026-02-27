@@ -1,7 +1,6 @@
 import React from 'react';
 import { useAetherStore } from '../../core';
 import { useWidgetsLoad, useGenerate } from './hooks';
-import { WebGLBackground } from './components';
 import { Widget } from './components';
 import { InputBar } from './components/InputBar';
 import { motion, AnimatePresence } from 'motion/react';
@@ -39,9 +38,7 @@ export function DesktopPage() {
   };
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#ede6da] text-white font-sans selection:bg-indigo-500/30">
-      <WebGLBackground />
-
+    <div className="relative w-screen h-screen overflow-hidden text-white font-sans selection:bg-indigo-500/30">
       {/* Miniature grid — z-10; always clickable so miniatures can be opened when windows are open */}
       <div className="absolute inset-0 z-10" style={{ pointerEvents: 'auto' }}>
         <div

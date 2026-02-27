@@ -77,8 +77,48 @@ export const AetherCanvas = forwardRef<AetherCanvasHandle>((_, ref) => {
 
 AetherCanvas.displayName = 'AetherCanvas';
 
+/**
+ * Scripts inside Shadow DOM still run against the global `document`,
+ * so document.getElementById / querySelector won't find shadow elements.
+ *
+ * Fix: patch these methods to search inside the shadow root first,
+ * falling back to the real document if not found there.
+ */
+const SHADOW_PATCH = (shadowId: string) => `
+(function() {
+  var _shadow = document.querySelector('[data-shadow-id="${shadowId}"]')?.shadowRoot;
+  if (!_shadow) return;
+  var _origGetById = document.getElementById.bind(document);
+  var _origQS = document.querySelector.bind(document);
+  var _origQSA = document.querySelectorAll.bind(document);
+  document.getElementById = function(id) {
+    return _shadow.getElementById(id) || _origGetById(id);
+  };
+  document.querySelector = function(sel) {
+    return _shadow.querySelector(sel) || _origQS(sel);
+  };
+  document.querySelectorAll = function(sel) {
+    var r = _shadow.querySelectorAll(sel);
+    return r.length ? r : _origQSA(sel);
+  };
+})();
+`;
+
+let shadowIdCounter = 0;
+
 function reRunScripts(root: ShadowRoot) {
+  // Give the host element a unique id so the patch script can find it
+  const host = root.host as HTMLElement;
+  const shadowId = `aether-shadow-${++shadowIdCounter}`;
+  host.setAttribute('data-shadow-id', shadowId);
+
+  // First inject the document patch so it runs before user scripts
+  const patchScript = document.createElement('script');
+  patchScript.textContent = SHADOW_PATCH(shadowId);
+  root.appendChild(patchScript);
+
   root.querySelectorAll('script').forEach((oldScript) => {
+    if (oldScript === patchScript) return;
     if (oldScript.src) return;
     const newScript = document.createElement('script');
     newScript.textContent = (oldScript.textContent ?? '')

@@ -29,7 +29,7 @@ export function AetherStatus({ dialogueText, onDismissDialogue }: AetherStatusPr
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.2 }}
-            className="fixed top-14 left-1/2 -translate-x-1/2 z-40 pointer-events-none"
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-40 pointer-events-none"
           >
             <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-black/25 backdrop-blur-xl border border-white/10 text-white/60 text-xs font-medium">
               {isGenerating && (

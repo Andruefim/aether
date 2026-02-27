@@ -46,6 +46,7 @@ export const BACKGROUND_VERTEX = `
 export const BACKGROUND_FRAGMENT = `
   uniform float uTime;
   uniform vec3 uBeige;
+  uniform float uHighlight;
   varying vec2 vUv;
   void main() {
     float band = 0.024 + 0.004 * sin(uTime * 0.7);
@@ -55,7 +56,10 @@ export const BACKGROUND_FRAGMENT = `
     float top = smoothstep(1.0, 1.0 - band, vUv.y);
     float inRect = left * right * bottom * top;
     vec3 centerColor = uBeige * 0.8;
-    vec3 edgeColor = uBeige * 0.88;
+    vec3 beigeEdge = uBeige * 0.88;
+    vec3 blueEdge = vec3(0.35, 0.55, 0.98);
+    float h = clamp(uHighlight, 0.0, 1.0);
+    vec3 edgeColor = mix(beigeEdge, blueEdge, h);
     vec3 color = mix(edgeColor, centerColor, inRect);
     gl_FragColor = vec4(color, 1.0);
   }
