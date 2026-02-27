@@ -55,6 +55,7 @@ export class AetherService {
         try {
           // 1. Call orchestrator (MiniCPM) with screenshot
           const result = await this.callOrchestrator(dto);
+          this.logger.log(`[Orchestrator] action=${result.action} instruction=${result.instruction}`);
           emit({ type: 'route', action: result.action, instruction: result.instruction });
 
           if (result.action === 'dialogue') {
@@ -80,8 +81,9 @@ export class AetherService {
 
           emit({ type: 'done' });
         } catch (err) {
-          this.logger.error('AetherService error', err);
-          emit({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
+          const msg = err instanceof Error ? err.message : 'Unknown error';
+          this.logger.error(`AetherService error: ${msg}`, err instanceof Error ? err.stack : '');
+          emit({ type: 'error', message: msg });
         } finally {
           subscriber.complete();
         }
@@ -160,6 +162,8 @@ export class AetherService {
     instruction: string,
     emit: (obj: Record<string, unknown>) => void,
   ): Promise<void> {
+    this.logger.log(`[Coder] instruction from orchestrator: ${instruction}`);
+
     // Truncate HTML if too large
     const truncatedHtml =
       currentHtml.length > MAX_HTML_CHARS

@@ -36,6 +36,20 @@ AVAILABLE BACKEND APIS (call via fetch from inside the widget):
   Never hardcode YouTube channel IDs — always use channel-by-name/latest with the channel's name.
   Youtube widget must contain search feature.`;
 
+/** Backend API docs shared with Aether coder so generated widgets can call integrations. */
+export const BACKEND_APIS_DOC = `
+AVAILABLE BACKEND APIS (call via fetch from inside the page):
+- YouTube search:            GET /api/integrations/youtube/search?q={query}&max={1-50}
+- YouTube channel search:    GET /api/integrations/youtube/channels?q={channelName}&max={1-10}
+  Returns: [{ channelId, title, description, thumbnail }]
+- YouTube channel latest:    GET /api/integrations/youtube/channel/{channelId}/latest?max={1-50}
+- YouTube latest by name:    GET /api/integrations/youtube/channel-by-name/latest?q={channelName}&max={1-50}
+  *** PREFERRED for YouTube widgets — resolves channel name at runtime, no hardcoded IDs needed ***
+  All video endpoints return: [{ videoId, title, channelTitle, description, thumbnail, publishedAt }]
+  Embed a video: https://www.youtube.com/embed/{videoId}
+  Never hardcode YouTube channel IDs — always use channel-by-name/latest with the channel's name.
+  YouTube widgets must include search or channel-by-name usage.`;
+
 export const PREVIEW_SYSTEM_PROMPT = `You are a minimalist widget icon generator.
 Given a short widget description, output a 160x120 HTML/CSS/SVG thumbnail — a centered glass card with a custom SVG icon.
 

@@ -1,9 +1,11 @@
+import { BACKEND_APIS_DOC } from '../generate/generate.constants';
+
 /**
  * Model names for Aether mode.
  * Override via env vars if needed.
  */
-export const ORCHESTRATOR_MODEL = process.env.AETHER_ORCHESTRATOR_MODEL ?? 'openbmb/minicpm-o4.5:8b';
-export const CODER_MODEL = process.env.AETHER_CODER_MODEL ?? 'qwen3-coder:30b';
+export const ORCHESTRATOR_MODEL = process.env.AETHER_ORCHESTRATOR_MODEL ?? 'gemma3:4b';
+export const CODER_MODEL = process.env.AETHER_CODER_MODEL ?? 'glm-4.7-flash:latest';
 
 /**
  * Voice service base URL (Python FastAPI).
@@ -32,17 +34,20 @@ Respond ONLY with a valid JSON object (no markdown, no explanation):
 }
 
 Action rules:
-- "generate_ui": user wants to CREATE, MODIFY, ADD, REMOVE, CHANGE anything visual in the interface
-  Examples: "make the button red", "add a timer", "create a weather widget", "remove the sidebar"
-- "dialogue": user ASKS A QUESTION about the interface, wants INFORMATION, or requests EXPLANATION
+- "generate_ui": user wants to CREATE, OPEN, ADD, MODIFY, REMOVE any UI element or widget ON THE SCREEN.
+  This includes: calculators, timers, notes, lists, forms, buttons, panels — anything that should be RENDERED in the interface.
+  Examples: "open calculator", "add a timer", "create a weather widget", "make the button red", "add notes", "remove the sidebar"
+  "Open calculator" / "открой калькулятор" = generate_ui (build a calculator widget), NOT tool.
+- "dialogue": user ASKS A QUESTION about the interface, wants INFORMATION, or requests EXPLANATION.
   Examples: "what does this button do?", "how many items are in the list?", "explain this chart"
-- "tool": user needs CURRENT EXTERNAL DATA (news, weather, prices, search)
-  Examples: "show me today's weather", "search for latest AI news", "get Bitcoin price"
+- "tool": when user needs LIVE EXTERNAL DATA (search, weather, stock price, news). The system fetches the data, then the coder generates a widget that displays it. So tools are used FOR widget generation when the widget needs external data.
+  Use "generate_ui" for widgets that need no external data (calculator, timer, notes). Use "tool" when the widget content comes from APIs/search.
+  Examples: "search the web for X", "show me today's weather", "get Bitcoin price", "YouTube widget for channel X"
 
 For instruction:
-- generate_ui: write a precise technical instruction for the HTML coder
-- dialogue: write the user's question clearly
-- tool: specify the tool call needed
+- generate_ui: write a clear instruction for the HTML coder describing WHAT to build or change (e.g. "Create a simple arithmetic calculator with number keys and +, -, *, /, = in a glass panel").
+- dialogue: write the user's question clearly.
+- tool: specify the external data request (e.g. "search query: ...").
 
 Respond in the same language as the user.
 Keep instruction concise and specific.`;
@@ -55,7 +60,7 @@ export const CODER_SYSTEM_PROMPT = `You are an HTML interface generator for a fu
 
 You receive:
 1. The current full HTML of the interface (between <CURRENT_HTML> tags)
-2. A specific instruction for what to change
+2. A specific instruction for what to change (and optionally "Available data from tools" with fetched data)
 
 STRICT RULES:
 - Return ONLY the complete updated HTML document. Nothing else. No markdown. No explanation.
@@ -63,6 +68,7 @@ STRICT RULES:
 - Preserve all id attributes, data-* attributes, and event handlers.
 - Inline all styles and scripts. No external CSS or JS dependencies (except CDNs if absolutely needed).
 - The interface must be FULL SCREEN: body { width: 100vw; height: 100vh; overflow: hidden; }
+- WIDGETS MUST BE INTERACTIVE: a calculator must perform calculations (use inline <script> with click handlers and logic). A timer must count. Buttons and inputs must work. Never output static-only UI where the user expects interaction.
 
 DESIGN SYSTEM (mandatory):
 - Background: transparent (the OS handles background)
@@ -77,7 +83,8 @@ DESIGN SYSTEM (mandatory):
 - Animations: subtle, 200-400ms, ease transitions
 
 BOTTOM SAFE ZONE: Always leave 80px at the bottom for the Aether input bar.
-Never place content below calc(100vh - 80px).`;
+Never place content below calc(100vh - 80px).
+${BACKEND_APIS_DOC}`;
 
 /**
  * Default initial Aether interface shown when mode is first opened.

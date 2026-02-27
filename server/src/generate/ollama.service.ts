@@ -58,7 +58,17 @@ export class OllamaService {
       }),
     });
 
-    if (!res.ok) throw new Error(`Ollama chat failed: ${res.statusText}`);
+    if (!res.ok) {
+      const body = await res.text();
+      let detail = body;
+      try {
+        const j = JSON.parse(body) as { error?: string };
+        if (j.error) detail = j.error;
+      } catch {
+        // use raw body
+      }
+      throw new Error(`Ollama chat failed: ${res.status} ${res.statusText}. ${detail}`);
+    }
     const data = (await res.json()) as { message: OllamaMessage };
     return data.message;
   }

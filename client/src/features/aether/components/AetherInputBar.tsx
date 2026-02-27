@@ -47,7 +47,7 @@ export function AetherInputBar({ onSubmit, disabled }: AetherInputBarProps) {
         animate={{ y: 0, opacity: 1 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
         onSubmit={handleSubmit}
-        className="relative flex items-center w-full bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden py-2"
+        className="relative flex items-center w-full bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
       >
         <div className="pl-4 pr-2 text-white/50 shrink-0">
           {input ? <Sparkles size={20} className="text-indigo-400" /> : <Search size={20} />}
