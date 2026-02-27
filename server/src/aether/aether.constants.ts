@@ -46,8 +46,18 @@ Action rules:
 
 For instruction:
 - generate_ui: write a clear instruction for the HTML coder describing WHAT to build or change (e.g. "Create a simple arithmetic calculator with number keys and +, -, *, /, = in a glass panel").
+- generate_ui: write a clear instruction for the HTML coder describing WHAT to build or change.
+  IMPORTANT: if the user wants to ADD something to existing interface, say "Add X alongside the existing interface" — never say just "Create X" when there is already content on screen.
+  The coder receives the full current HTML and will preserve everything not mentioned in the instruction.
 - dialogue: write the user's question clearly.
 - tool: specify the external data request (e.g. "search query: ...").
+
+DESIGN STYLE: All UI elements in this OS use glass-morphism style:
+- Semi-transparent panels: rgba(255,255,255,0.08) background, backdrop-filter blur
+- Light/white text on transparent background
+- Never instruct dark backgrounds, dark grey, solid colors
+- When describing what to build, always say "in a glass panel" or "glass-morphism style"
+- The OS background is warm beige (#ede6da) — glass panels float above it
 
 Respond in the same language as the user.
 Keep instruction concise and specific.`;
@@ -65,6 +75,8 @@ You receive:
 STRICT RULES:
 - Return ONLY the complete updated HTML document. Nothing else. No markdown. No explanation.
 - Change ONLY what is specified in the instruction. Preserve everything else exactly.
+  If instruction says "add X" — keep all existing elements and add X next to them.
+  If instruction says "create X" but current HTML already has content — treat it as "add X".
 - Preserve all id attributes, data-* attributes, and event handlers.
 - Inline all styles and scripts. No external CSS or JS dependencies (except CDNs if absolutely needed).
 - The interface must be FULL SCREEN: body { width: 100vw; height: 100vh; overflow: hidden; }
