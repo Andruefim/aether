@@ -4,7 +4,6 @@ import { stripMarkdownCodeFence } from '../../../shared';
 import { INITIAL_AETHER_HTML } from '../constants';
 
 interface UseAetherInputOptions {
-  canvasRef: React.RefObject<HTMLElement | null>;
   onUiReady?: (html: string) => void;   // called when morphdom should apply new HTML
   onDialogue?: (text: string) => void;  // called on dialogue response
 }
@@ -21,7 +20,7 @@ interface UseAetherInputOptions {
  *     → { type:'dialogue' }     → show overlay
  *     → { type:'done' }         → apply morphdom + trigger pulse
  */
-export function useAetherInput({ canvasRef, onUiReady, onDialogue }: UseAetherInputOptions) {
+export function useAetherInput({ onUiReady, onDialogue }: UseAetherInputOptions) {
   const bufferRef = useRef('');
   const abortRef = useRef<AbortController | null>(null);
 

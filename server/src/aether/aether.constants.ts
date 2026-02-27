@@ -68,7 +68,7 @@ STRICT RULES:
 - Preserve all id attributes, data-* attributes, and event handlers.
 - Inline all styles and scripts. No external CSS or JS dependencies (except CDNs if absolutely needed).
 - The interface must be FULL SCREEN: body { width: 100vw; height: 100vh; overflow: hidden; }
-- WIDGETS MUST BE INTERACTIVE: a calculator must perform calculations (use inline <script> with click handlers and logic). A timer must count. Buttons and inputs must work. Never output static-only UI where the user expects interaction.
+- FUNCTIONALITY MUST BE REAL, NOT COSMETIC: any requested feature (e.g. calculator, timer, notes) must actually work. A calculator must compute and display results; a timer must count; inputs must submit and persist if needed. Do not output UI that only looks functional — implement the logic in inline <script> with real event handlers and state.
 
 DESIGN SYSTEM (mandatory):
 - Background: transparent (the OS handles background)
@@ -112,12 +112,45 @@ body {
   height: 100vh;
   justify-content: center;
 }
-
+.title {
+  font-size: 52px;
+  font-weight: 100;
+  letter-spacing: 0.25em;
+  color: rgba(237,230,218,0.7);
+  text-transform: uppercase;
+}
+.subtitle {
+  font-size: 15px;
+  color: rgba(255,255,255,0.3);
+  font-weight: 300;
+  letter-spacing: 0.1em;
+}
+.hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.18);
+  letter-spacing: 0.05em;
+}
+.orb {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(237,230,218,0.25), rgba(180,160,200,0.08));
+  border: 1px solid rgba(237,230,218,0.15);
+  animation: pulse 4s ease-in-out infinite;
+  backdrop-filter: blur(8px);
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
 </style>
 </head>
 <body>
 <div class="container">
-
+  <div class="orb"></div>
+  <div class="title">Aether</div>
+  <div class="subtitle">AI Interface</div>
+  <div class="hint">Type or speak to build your interface</div>
 </div>
 </body>
 </html>`;

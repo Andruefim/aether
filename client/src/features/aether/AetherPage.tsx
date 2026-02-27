@@ -7,7 +7,7 @@ import {
   AetherInputBar,
   type AetherCanvasHandle,
 } from './components';
-import { useAetherInput, useScreenshot } from './hooks';
+import { useAetherInput } from './hooks';
 
 export function AetherPage() {
   const canvasRef = useRef<AetherCanvasHandle>(null);
@@ -15,19 +15,13 @@ export function AetherPage() {
 
   const setAetherHtml = useAetherStore((s) => s.setAetherHtml);
   const aetherIsGenerating = useAetherStore((s) => s.aetherIsGenerating);
-  const aetherPulseAt = useAetherStore((s) => s.aetherPulseAt);
 
-  const { captureElement } = useScreenshot();
-
-  // Initialize store with default HTML on first mount
   useEffect(() => {
-    const currentHtml = useAetherStore.getState().aetherHtml;
-    if (!currentHtml) {
+    if (!useAetherStore.getState().aetherHtml) {
       setAetherHtml(INITIAL_AETHER_HTML);
     }
   }, [setAetherHtml]);
 
-  // When morphdom should apply the final HTML
   const handleUiReady = useCallback((html: string) => {
     canvasRef.current?.applyHtml(html);
   }, []);
@@ -37,7 +31,6 @@ export function AetherPage() {
   }, []);
 
   const { sendInput } = useAetherInput({
-    canvasRef: { current: canvasRef.current?.getElement() ?? null } as React.RefObject<HTMLElement>,
     onUiReady: handleUiReady,
     onDialogue: handleDialogue,
   });
@@ -45,24 +38,23 @@ export function AetherPage() {
   const handleSubmit = useCallback(
     async (text: string) => {
       setDialogueText(null);
-      const screenshot = await captureElement(canvasRef.current?.getElement() ?? null);
+      // Screenshot comes from iframe content via handle
+      const screenshot = await canvasRef.current?.captureScreenshot() ?? null;
       await sendInput(text, screenshot);
     },
-    [captureElement, sendInput],
+    [sendInput],
   );
 
   return (
     <div className="relative w-screen h-screen overflow-hidden">
-      {/* Live interface canvas — z-10 */}
+
       <AetherCanvas ref={canvasRef} />
 
-      {/* Status indicators, undo button, dialogue overlay */}
       <AetherStatus
         dialogueText={dialogueText}
         onDismissDialogue={() => setDialogueText(null)}
       />
 
-      {/* Input bar with voice button — z-50 */}
       <AetherInputBar
         onSubmit={handleSubmit}
         disabled={aetherIsGenerating}
