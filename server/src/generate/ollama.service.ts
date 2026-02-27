@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 export interface OllamaMessage {
@@ -32,12 +32,14 @@ export interface OllamaTool {
 
 @Injectable()
 export class OllamaService {
+  private readonly logger = new Logger(OllamaService.name);
   private readonly baseUrl: string;
   readonly defaultModel: string;
 
   constructor(private readonly config: ConfigService) {
     this.baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
     this.defaultModel = this.config.get<string>('OLLAMA_MODEL', 'qwen3-coder:30b');
+    this.logger.log(`Ollama: baseUrl=${this.baseUrl} defaultModel=${this.defaultModel}`);
   }
 
   /** Non-streaming single turn — used for the agentic tool-call loop. */
@@ -46,6 +48,8 @@ export class OllamaService {
     tools?: OllamaTool[],
     model?: string,
   ): Promise<OllamaMessage> {
+
+    this.logger.log(`Ollama: chat with model=${model ?? this.defaultModel}`);
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

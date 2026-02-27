@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Observable } from 'rxjs';
 import { OllamaService, OllamaMessage } from '../generate/ollama.service';
 import { WebSearchService } from '../web-search/web-search.service';
@@ -31,9 +32,18 @@ export class AetherService {
   private readonly logger = new Logger(AetherService.name);
 
   constructor(
+    private readonly config: ConfigService,
     private readonly ollama: OllamaService,
     private readonly webSearch: WebSearchService,
   ) {}
+
+  private get orchestratorModel(): string {
+    return this.config.get<string>('AETHER_ORCHESTRATOR_MODEL', ORCHESTRATOR_MODEL);
+  }
+
+  private get coderModel(): string {
+    return this.config.get<string>('AETHER_CODER_MODEL', CODER_MODEL);
+  }
 
   /**
    * Main SSE stream for aether input.
@@ -98,7 +108,7 @@ export class AetherService {
    */
   async transcribe(audioBuffer: Buffer, mimeType: string): Promise<{ text: string; language: string }> {
     const form = new FormData();
-    const blob = new Blob([audioBuffer], { type: mimeType });
+    const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType });
     form.append('audio', blob, 'recording.webm');
 
     const res = await fetch(`${VOICE_SERVICE_URL}/transcribe`, {
@@ -145,7 +155,7 @@ export class AetherService {
       userMessage,
     ];
 
-    const response = await this.ollama.chat(messages, undefined, ORCHESTRATOR_MODEL);
+    const response = await this.ollama.chat(messages, undefined, this.orchestratorModel);
     const content = response.content?.trim() ?? '';
 
     try {
@@ -165,7 +175,7 @@ export class AetherService {
     instruction: string,
     emit: (obj: Record<string, unknown>) => void,
   ): Promise<void> {
-    this.logger.log(`[Coder] instruction from orchestrator: ${instruction}`);
+    this.logger.log(`[Coder] model=${this.coderModel} instruction=${instruction}`);
 
     // Truncate HTML if too large
     const truncatedHtml =
@@ -180,7 +190,7 @@ export class AetherService {
       { role: 'user', content: userContent },
     ];
 
-    for await (const token of this.ollama.streamMessages(messages, CODER_MODEL)) {
+    for await (const token of this.ollama.streamMessages(messages, this.coderModel)) {
       emit({ type: 'token', text: token });
     }
   }
