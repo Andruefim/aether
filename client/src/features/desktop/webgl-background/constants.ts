@@ -47,13 +47,16 @@ export const BACKGROUND_FRAGMENT = `
   uniform float uTime;
   uniform vec3 uBeige;
   uniform float uHighlight;
+  uniform float uAspect;
   varying vec2 vUv;
   void main() {
-    float band = 0.024 + 0.004 * sin(uTime * 0.7);
-    float left = smoothstep(0.0, band, vUv.x);
-    float right = smoothstep(1.0, 1.0 - band, vUv.x);
-    float bottom = smoothstep(0.0, band, vUv.y);
-    float top = smoothstep(1.0, 1.0 - band, vUv.y);
+    float band = 0.01 + 0.002 * sin(uTime * 0.7);
+    float bandX = band;
+    float bandY = band * uAspect;
+    float left = smoothstep(0.0, bandX, vUv.x);
+    float right = smoothstep(1.0, 1.0 - bandX, vUv.x);
+    float bottom = smoothstep(0.0, bandY, vUv.y);
+    float top = smoothstep(1.0, 1.0 - bandY, vUv.y);
     float inRect = left * right * bottom * top;
     vec3 centerColor = uBeige * 0.8;
     vec3 beigeEdge = uBeige * 0.88;
