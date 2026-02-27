@@ -126,6 +126,9 @@ export class AetherService {
   // ── Private helpers ─────────────────────────────────────────────────────
 
   private async callOrchestrator(dto: AetherInputDto): Promise<OrchestratorResult> {
+    if (dto.screenshot) {
+      this.logger.log(`[Orchestrator] received screenshot (${dto.screenshot.length} chars base64)`);
+    }
     const userMessage: OllamaMessage = {
       role: 'user',
       content: dto.text,
