@@ -107,18 +107,20 @@ const SHADOW_PATCH = (shadowId: string) => `
 let shadowIdCounter = 0;
 
 function reRunScripts(root: ShadowRoot) {
-  // Give the host element a unique id so the patch script can find it
   const host = root.host as HTMLElement;
   const shadowId = `aether-shadow-${++shadowIdCounter}`;
   host.setAttribute('data-shadow-id', shadowId);
 
-  // First inject the document patch so it runs before user scripts
+  // Сначала удаляем все старые скрипты
+  const scripts = Array.from(root.querySelectorAll('script'));
+  
+  // Инжектируем патч ПЕРВЫМ
   const patchScript = document.createElement('script');
   patchScript.textContent = SHADOW_PATCH(shadowId);
   root.appendChild(patchScript);
 
-  root.querySelectorAll('script').forEach((oldScript) => {
-    if (oldScript === patchScript) return;
+  // Затем запускаем пользовательские скрипты
+  scripts.forEach((oldScript) => {
     if (oldScript.src) return;
     const newScript = document.createElement('script');
     newScript.textContent = (oldScript.textContent ?? '')
