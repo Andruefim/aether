@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import React, { useEffect, useRef, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { useAetherStore } from '../../../core';
 import { stripMarkdownCodeFence } from '../../../shared';
 import { INITIAL_AETHER_HTML } from '../constants';
@@ -6,25 +6,25 @@ import { INITIAL_AETHER_HTML } from '../constants';
 export interface AetherCanvasHandle {
   applyHtml: (html: string) => void;
   getElement: () => HTMLIFrameElement | null;
-  /** Capture the iframe content as base64 jpeg for vision (MiniCPM screenshot). */
   captureScreenshot: () => Promise<string | null>;
 }
 
 /**
  * Full-screen iframe that renders the live Aether interface.
  *
- * iframe gives us:
- * - Full CSS isolation — generated `* { margin:0 }` never leaks to parent page
- * - Scripts run natively — document.getElementById works without any patches
- * - Screenshot support — html2canvas can target iframe.contentDocument.body
+ * Updates in real-time during SSE streaming via throttle (300ms).
+ * Immediately flushes on generation complete.
  */
 export const AetherCanvas = forwardRef<AetherCanvasHandle>((_, ref) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const lastAppliedRef = useRef<string>('');
+  const throttleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingHtmlRef = useRef<string>('');
+
   const aetherHtml = useAetherStore((s) => s.aetherHtml);
   const aetherIsGenerating = useAetherStore((s) => s.aetherIsGenerating);
 
-  function injectHtml(html: string) {
+  const injectHtml = useCallback((html: string) => {
     if (!html) return;
     if (lastAppliedRef.current === html) return;
     lastAppliedRef.current = html;
@@ -37,7 +37,17 @@ export const AetherCanvas = forwardRef<AetherCanvasHandle>((_, ref) => {
     doc.open();
     doc.write(html);
     doc.close();
-  }
+  }, []);
+
+  // Throttled inject — batches rapid token updates, one write per 300ms
+  const injectThrottled = useCallback((html: string) => {
+    pendingHtmlRef.current = html;
+    if (throttleTimerRef.current) return;
+    throttleTimerRef.current = setTimeout(() => {
+      throttleTimerRef.current = null;
+      injectHtml(pendingHtmlRef.current);
+    }, 300);
+  }, [injectHtml]);
 
   async function captureScreenshot(): Promise<string | null> {
     const iframe = iframeRef.current;
@@ -51,7 +61,6 @@ export const AetherCanvas = forwardRef<AetherCanvasHandle>((_, ref) => {
         useCORS: true,
         logging: false,
         backgroundColor: null,
-        // Tell html2canvas to use the iframe's window
         windowWidth: iframe.contentWindow?.innerWidth ?? 1280,
         windowHeight: iframe.contentWindow?.innerHeight ?? 800,
       });
@@ -68,19 +77,34 @@ export const AetherCanvas = forwardRef<AetherCanvasHandle>((_, ref) => {
     captureScreenshot,
   }));
 
+  // Real-time: throttled during streaming, immediate flush on done
   useEffect(() => {
-    if (!aetherIsGenerating && aetherHtml) {
-      injectHtml(stripMarkdownCodeFence(aetherHtml));
-    }
-  }, [aetherIsGenerating, aetherHtml]);
+    if (!aetherHtml) return;
+    const html = stripMarkdownCodeFence(aetherHtml);
 
+    if (aetherIsGenerating) {
+      injectThrottled(html);
+    } else {
+      // Generation complete — cancel pending throttle, apply immediately
+      if (throttleTimerRef.current) {
+        clearTimeout(throttleTimerRef.current);
+        throttleTimerRef.current = null;
+      }
+      injectHtml(html);
+    }
+  }, [aetherHtml, aetherIsGenerating, injectHtml, injectThrottled]);
+
+  // Initialize on mount
   useEffect(() => {
     const t = setTimeout(() => {
       const initial = useAetherStore.getState().aetherHtml || INITIAL_AETHER_HTML;
       injectHtml(initial);
     }, 50);
-    return () => clearTimeout(t);
-  }, []);
+    return () => {
+      clearTimeout(t);
+      if (throttleTimerRef.current) clearTimeout(throttleTimerRef.current);
+    };
+  }, [injectHtml]);
 
   return (
     <iframe
