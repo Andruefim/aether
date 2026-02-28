@@ -72,18 +72,19 @@ export class AetherService {
             // Direct answer from MiniCPM
             emit({ type: 'dialogue', text: result.response ?? result.instruction });
           } else if (result.action === 'tool') {
-            // Execute tools then let qwen3-coder build/update UI
+            // Execute tools then let coder build a widget with the data
             const toolContext = await this.executeToolsForAether(
               result.instruction,
               dto.currentHtml,
               emit,
             );
-            // Stream UI update with tool data
-            await this.streamUiGeneration(
-              dto.currentHtml,
-              `${result.instruction}\n\nAvailable data from tools:\n${toolContext}`,
-              emit,
-            );
+            const toolInstruction = `TASK: Output ONLY a complete HTML document starting with <!DOCTYPE html>. Build a glass-style widget that displays the data below. Do not output an article, explanation, or plain text — only the full HTML page.
+
+${result.instruction}
+
+Available data from tools:
+${toolContext}`;
+            await this.streamUiGeneration(dto.currentHtml, toolInstruction, emit);
           } else {
             // generate_ui: stream qwen3-coder
             await this.streamUiGeneration(dto.currentHtml, result.instruction, emit);
@@ -183,7 +184,12 @@ export class AetherService {
         ? currentHtml.slice(0, MAX_HTML_CHARS) + '\n<!-- truncated -->'
         : currentHtml;
 
-    const userContent = `<CURRENT_HTML>\n${truncatedHtml}\n</CURRENT_HTML>\n\nINSTRUCTION: ${instruction}`;
+    const formatReminder =
+      instruction.includes('Available data from tools') ||
+      instruction.includes('TASK: Output ONLY')
+        ? 'Reply with ONLY the HTML document. First character must be <.\n\n'
+        : '';
+    const userContent = `${formatReminder}<CURRENT_HTML>\n${truncatedHtml}\n</CURRENT_HTML>\n\nINSTRUCTION: ${instruction}`;
 
     const messages: OllamaMessage[] = [
       { role: 'system', content: CODER_SYSTEM_PROMPT },
@@ -204,7 +210,10 @@ export class AetherService {
 
     // Simple keyword-based tool routing for aether
     try {
-      const query = instruction.replace(/^(search|find|get|show|what is|how is)\s+/i, '').trim();
+      let query = instruction;
+      const searchQueryMatch = instruction.match(/search\s+query:\s*([^|]+)/i);
+      if (searchQueryMatch) query = searchQueryMatch[1].trim();
+      else query = instruction.replace(/^(search|find|get|show|what is|how is)\s+/i, '').replace(/\s*\|\s*display as:.*$/i, '').trim();
       emit({ type: 'tool_call', name: 'web_search', args: { query } });
 
       const searchResults = await this.webSearch.search(query, 3);
