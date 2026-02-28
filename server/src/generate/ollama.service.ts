@@ -38,7 +38,7 @@ export class OllamaService {
 
   constructor(private readonly config: ConfigService) {
     this.baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
-    this.defaultModel = this.config.get<string>('OLLAMA_MODEL', 'qwen3-coder:30b');
+    this.defaultModel = this.config.get<string>('OLLAMA_MODEL', 'qwen3:latest');
     this.logger.log(`Ollama: baseUrl=${this.baseUrl} defaultModel=${this.defaultModel}`);
   }
 

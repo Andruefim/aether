@@ -1,4 +1,4 @@
-/** Default HTML shown when Aether mode is first opened */
+/** Default HTML shown when Aether mode is first opened (welcome screen; not sent to API) */
 export const INITIAL_AETHER_HTML = `<!DOCTYPE html>
 <html>
 <head>
@@ -59,5 +59,33 @@ body {
   <div class="subtitle">AI Interface</div>
   <div class="hint">Type or speak to build your interface</div>
 </div>
+</body>
+</html>`;
+
+/** Minimal HTML sent to API and shown after first request (no welcome content) */
+export const MINIMAL_AETHER_HTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+  background: transparent;
+  display: flex; align-items: center; justify-content: center;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: rgba(255,255,255,0.9);
+}
+.container {
+  text-align: center;
+  display: flex; flex-direction: column; gap: 20px; align-items: center;
+  height: 100vh;
+  justify-content: center;
+}
+</style>
+</head>
+<body>
+<div class="container"></div>
 </body>
 </html>`;

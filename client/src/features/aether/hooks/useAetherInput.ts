@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react';
 import { useAetherStore, type AetherMessage } from '../../../core';
-import { stripMarkdownCodeFence } from '../../../shared';
-import { INITIAL_AETHER_HTML } from '../constants';
+import { stripMarkdownCodeFence, stripToHtmlDocumentStart } from '../../../shared';
+import { INITIAL_AETHER_HTML, MINIMAL_AETHER_HTML } from '../constants';
 
 interface UseAetherInputOptions {
   onUiReady?: (html: string) => void;   // called when morphdom should apply new HTML
@@ -45,9 +45,11 @@ export function useAetherInput({ onUiReady, onDialogue }: UseAetherInputOptions)
       setAetherIsGenerating(true);
       setAetherStatus('Thinking...');
 
-      // Snapshot current HTML as fallback
-      const currentHtml = useAetherStore.getState().aetherHtml || INITIAL_AETHER_HTML;
-      setAetherPreviousHtml(currentHtml);
+      const storeHtml = useAetherStore.getState().aetherHtml || INITIAL_AETHER_HTML;
+      const isWelcomeScreen = storeHtml === INITIAL_AETHER_HTML;
+      const currentHtml = isWelcomeScreen ? MINIMAL_AETHER_HTML : storeHtml;
+      if (isWelcomeScreen) setAetherHtml(MINIMAL_AETHER_HTML);
+      setAetherPreviousHtml(storeHtml);
 
       // Add user message to history
       const userMsg: AetherMessage = { role: 'user', content: text, timestamp: Date.now() };
@@ -108,13 +110,14 @@ export function useAetherInput({ onUiReady, onDialogue }: UseAetherInputOptions)
                   );
                   break;
 
-                case 'token':
-                  if (event.text) {
-                    bufferRef.current += event.text;
-                    // Live preview: update store with streaming HTML
-                    setAetherHtml(bufferRef.current);
-                  }
-                  break;
+                  case 'token':
+                    if (event.text) {
+                      bufferRef.current += event.text;
+                      const raw = stripMarkdownCodeFence(bufferRef.current);
+                      const fromDocStart = stripToHtmlDocumentStart(raw);
+                      if (fromDocStart) setAetherHtml(fromDocStart);
+                    }
+                    break;
 
                 case 'dialogue':
                   if (event.text) {
@@ -129,7 +132,7 @@ export function useAetherInput({ onUiReady, onDialogue }: UseAetherInputOptions)
 
                 case 'done': {
                   isDone = true;
-                  const finalHtml = stripMarkdownCodeFence(bufferRef.current);
+                  const finalHtml = stripToHtmlDocumentStart(stripMarkdownCodeFence(bufferRef.current));
                   if (finalHtml) {
                     setAetherHtml(finalHtml);
                     onUiReady?.(finalHtml);

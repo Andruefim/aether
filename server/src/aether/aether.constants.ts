@@ -5,7 +5,7 @@ import { BACKEND_APIS_DOC } from '../generate/generate.constants';
  * Override via env vars if needed.
  */
 export const ORCHESTRATOR_MODEL = process.env.AETHER_ORCHESTRATOR_MODEL ?? 'gemma3:4b';
-export const CODER_MODEL = process.env.AETHER_CODER_MODEL ?? 'glm-4.7-flash:latest';
+export const CODER_MODEL = process.env.AETHER_CODER_MODEL ?? 'qwen3:latest';
 
 /**
  * Voice service base URL (Python FastAPI).
@@ -45,7 +45,6 @@ Action rules:
   Examples: "search the web for X", "show me today's weather", "get Bitcoin price", "YouTube widget for channel X"
 
 For instruction:
-- generate_ui: write a clear instruction for the HTML coder describing WHAT to build or change (e.g. "Create a simple arithmetic calculator with number keys and +, -, *, /, = in a glass panel").
 - generate_ui: write a clear instruction for the HTML coder describing WHAT to build or change.
   IMPORTANT: if the user wants to ADD something to existing interface, say "Add X alongside the existing interface" — never say just "Create X" when there is already content on screen.
   The coder receives the full current HTML and will preserve everything not mentioned in the instruction.
@@ -134,12 +133,45 @@ body {
   height: 100vh;
   justify-content: center;
 }
-
+.title {
+  font-size: 52px;
+  font-weight: 100;
+  letter-spacing: 0.25em;
+  color: rgba(237,230,218,0.7);
+  text-transform: uppercase;
+}
+.subtitle {
+  font-size: 15px;
+  color: rgba(255,255,255,0.3);
+  font-weight: 300;
+  letter-spacing: 0.1em;
+}
+.hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.18);
+  letter-spacing: 0.05em;
+}
+.orb {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(237,230,218,0.25), rgba(180,160,200,0.08));
+  border: 1px solid rgba(237,230,218,0.15);
+  animation: pulse 4s ease-in-out infinite;
+  backdrop-filter: blur(8px);
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
 </style>
 </head>
 <body>
 <div class="container">
-
+  <div class="orb"></div>
+  <div class="title">Aether</div>
+  <div class="subtitle">AI Interface</div>
+  <div class="hint">Type or speak to build your interface</div>
 </div>
 </body>
 </html>`;
