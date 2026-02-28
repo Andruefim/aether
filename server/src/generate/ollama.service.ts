@@ -42,42 +42,46 @@ export class OllamaService {
     this.logger.log(`Ollama: baseUrl=${this.baseUrl} defaultModel=${this.defaultModel}`);
   }
 
-  /** Non-streaming single turn — used for the agentic tool-call loop. */
+  /**
+   * Non-streaming single turn.
+   * format='json' forces Ollama to return valid JSON (structured output mode).
+   */
   async chat(
     messages: OllamaMessage[],
     tools?: OllamaTool[],
     model?: string,
+    format?: 'json',
   ): Promise<OllamaMessage> {
+    this.logger.log(`Ollama: chat with model=${model ?? this.defaultModel}${format ? ' [json]' : ''}`);
 
-    this.logger.log(`Ollama: chat with model=${model ?? this.defaultModel}`);
+    const body: Record<string, unknown> = {
+      model: model ?? this.defaultModel,
+      messages,
+      stream: false,
+      options: { temperature: 0.2 },
+    };
+    if (tools) body.tools = tools;
+    if (format) body.format = format;
+
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: model ?? this.defaultModel,
-        messages,
-        tools,
-        stream: false,
-        options: { temperature: 0.2 },
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      let detail = body;
+      const bodyText = await res.text();
+      let detail = bodyText;
       try {
-        const j = JSON.parse(body) as { error?: string };
+        const j = JSON.parse(bodyText) as { error?: string };
         if (j.error) detail = j.error;
-      } catch {
-        // use raw body
-      }
+      } catch { /* use raw body */ }
       throw new Error(`Ollama chat failed: ${res.status} ${res.statusText}. ${detail}`);
     }
     const data = (await res.json()) as { message: OllamaMessage };
     return data.message;
   }
 
-  /** Streaming token generator — used for the final answer. */
   async *streamGenerate(
     prompt: string,
     systemInstruction: string,
@@ -92,7 +96,6 @@ export class OllamaService {
     );
   }
 
-  /** Streaming from an arbitrary message history — used after the tool loop. */
   async *streamMessages(messages: OllamaMessage[], model?: string): AsyncGenerator<string> {
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
@@ -124,9 +127,7 @@ export class OllamaService {
         try {
           const chunk = JSON.parse(trimmed) as { message?: { content?: string } };
           if (chunk.message?.content) yield chunk.message.content;
-        } catch {
-          // skip malformed
-        }
+        } catch { /* skip malformed */ }
       }
     }
 
@@ -134,9 +135,7 @@ export class OllamaService {
       try {
         const chunk = JSON.parse(buffer.trim()) as { message?: { content?: string } };
         if (chunk.message?.content) yield chunk.message.content;
-      } catch {
-        // skip
-      }
+      } catch { /* skip */ }
     }
   }
 }

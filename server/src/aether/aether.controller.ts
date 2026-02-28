@@ -19,8 +19,7 @@ export class AetherController {
 
   /**
    * POST /api/aether/input
-   * Main entry point. Accepts text + optional screenshot + currentHtml + history.
-   * Returns SSE stream with route decision + generated tokens or dialogue response.
+   * Text input SSE stream — route decision + generated HTML tokens or dialogue.
    */
   @Post('input')
   @Sse()
@@ -40,9 +39,35 @@ export class AetherController {
   }
 
   /**
+   * POST /api/aether/voice-chat
+   * Voice agent SSE stream.
+   * Events:
+   *   { type: 'speak', text }         → client plays TTS immediately
+   *   { type: 'route', action }        → if generate_ui
+   *   { type: 'token', text }          → HTML stream (if generate_ui)
+   *   { type: 'done' }
+   *   { type: 'error', message }
+   */
+  @Post('voice-chat')
+  @Sse()
+  voiceChat(@Body() body: AetherInputDto): Observable<{ data: string }> {
+    if (!body.text?.trim()) {
+      return new Observable((s) => {
+        s.next({ data: JSON.stringify({ type: 'error', message: 'text is required' }) });
+        s.complete();
+      });
+    }
+    return this.aetherService.streamVoiceChat({
+      text: body.text.trim(),
+      screenshot: body.screenshot,
+      currentHtml: body.currentHtml ?? '',
+      history: body.history ?? [],
+    });
+  }
+
+  /**
    * POST /api/aether/transcribe
-   * Accepts audio file (webm/opus), returns transcribed text.
-   * Proxies to Voice FastAPI service.
+   * Audio file → transcribed text via Whisper.
    */
   @Post('transcribe')
   @UseInterceptors(FileInterceptor('audio'))
@@ -55,7 +80,7 @@ export class AetherController {
 
   /**
    * POST /api/aether/speak
-   * Accepts { text: string }, returns audio/mpeg stream from XTTS-v2.
+   * { text } → audio/wav stream from XTTS-v2.
    */
   @Post('speak')
   async speak(
@@ -70,7 +95,7 @@ export class AetherController {
       return;
     }
 
-    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Type', 'audio/wav');
     res.setHeader('Transfer-Encoding', 'chunked');
 
     const reader = stream.getReader();

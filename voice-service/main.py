@@ -23,25 +23,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+# Coqui TTS imports transformers.pytorch_utils.isin_mps_friendly, removed in newer transformers.
+# Patch it with torch.isin so TTS loads without pinning an old transformers.
+def _patch_transformers_for_tts():
+    import torch
+    import transformers.pytorch_utils as pu
+    if not hasattr(pu, "isin_mps_friendly"):
+        pu.isin_mps_friendly = torch.isin
+_patch_transformers_for_tts()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ── Model paths ────────────────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────────────
 WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 XTTS_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
-
-# Path to a reference voice WAV for XTTS cloning (6–30 sec, clean speech)
-# If not found, falls back to a built-in speaker embedding
-REFERENCE_WAV_PATH = Path(os.environ.get("REFERENCE_WAV", "assets/reference.wav"))
-
-# Compute type: float16 for GPU, int8 for CPU
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
-DEVICE = os.environ.get("DEVICE", "cuda")  # or "cpu"
+DEVICE = os.environ.get("DEVICE", "cuda")
 
-
-# ── Lazy model loading ─────────────────────────────────────────────────────────
+# ── Model cache ────────────────────────────────────────────────────────────────
 whisper_model = None
 tts_model = None
+tts_speaker_name = None   # first available speaker (fallback)
 
 
 def load_whisper():
@@ -50,29 +53,33 @@ def load_whisper():
         return whisper_model
     logger.info(f"Loading Whisper {WHISPER_MODEL_SIZE} on {DEVICE} ({COMPUTE_TYPE})...")
     from faster_whisper import WhisperModel
-    whisper_model = WhisperModel(
-        WHISPER_MODEL_SIZE,
-        device=DEVICE,
-        compute_type=COMPUTE_TYPE,
-    )
+    whisper_model = WhisperModel(WHISPER_MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
     logger.info("Whisper loaded ✓")
     return whisper_model
 
 
 def load_tts():
-    global tts_model
+    global tts_model, tts_speaker_name
     if tts_model is not None:
         return tts_model
     logger.info("Loading XTTS-v2...")
     from TTS.api import TTS
     tts_model = TTS(XTTS_MODEL_NAME).to(DEVICE)
-    logger.info("XTTS-v2 loaded ✓")
+
+    # Pick first available speaker as fallback (avoids KeyError on "Ana Florence")
+    try:
+        speakers = tts_model.speakers or []
+        tts_speaker_name = speakers[0] if speakers else None
+        logger.info(f"XTTS-v2 loaded ✓ — available speakers: {len(speakers)}, fallback: {tts_speaker_name}")
+    except Exception as e:
+        logger.warning(f"Could not list speakers: {e}")
+        tts_speaker_name = None
+
     return tts_model
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pre-load models on startup
     try:
         load_whisper()
     except Exception as e:
@@ -95,26 +102,21 @@ app.add_middleware(
 )
 
 
-# ── Endpoints ──────────────────────────────────────────────────────────────────
-
 @app.get("/health")
 async def health():
     return {
         "status": "ok",
         "whisper": whisper_model is not None,
         "xtts": tts_model is not None,
+        "reference_wav": REFERENCE_WAV_PATH.exists(),
+        "fallback_speaker": tts_speaker_name,
     }
 
 
 @app.post("/transcribe")
 async def transcribe(audio: UploadFile):
-    """
-    Accepts audio file (webm, opus, wav, mp3, ogg).
-    Returns { text, language, duration }.
-    """
     model = load_whisper()
 
-    # Save to temp file (faster-whisper needs a file path or bytes)
     audio_bytes = await audio.read()
     if len(audio_bytes) < 100:
         raise HTTPException(400, "Audio file is empty or too small")
@@ -127,17 +129,12 @@ async def transcribe(audio: UploadFile):
         segments, info = model.transcribe(
             tmp_path,
             beam_size=5,
-            language=None,          # auto-detect (works for Russian + English)
-            vad_filter=True,        # skip silence
+            language=None,
+            vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 500},
         )
-
         text = " ".join(seg.text.strip() for seg in segments).strip()
-        return {
-            "text": text,
-            "language": info.language,
-            "duration": round(info.duration, 2),
-        }
+        return {"text": text, "language": info.language, "duration": round(info.duration, 2)}
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
@@ -149,16 +146,11 @@ class SpeakRequest(BaseModel):
 
 @app.post("/speak")
 async def speak(req: SpeakRequest):
-    """
-    Converts text to speech using XTTS-v2.
-    Returns streaming audio/wav.
-    """
     if not req.text.strip():
         raise HTTPException(400, "text is empty")
 
     model = load_tts()
 
-    # Determine speaker — use reference WAV if available
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         out_path = tmp.name
 
@@ -169,18 +161,19 @@ async def speak(req: SpeakRequest):
             file_path=out_path,
         )
 
-        if REFERENCE_WAV_PATH.exists():
-            tts_kwargs["speaker_wav"] = str(REFERENCE_WAV_PATH)
+        # Use built-in speaker (default); reference WAV is optional and can break path handling on Windows
+        if tts_speaker_name:
+            tts_kwargs["speaker"] = tts_speaker_name
+            logger.info(f"TTS: using built-in speaker '{tts_speaker_name}', lang={req.language}, len={len(req.text)}")
         else:
-            # Use built-in speaker (XTTS default for multilingual)
-            tts_kwargs["speaker"] = "Ana Florence"
+            logger.warning("TTS: no built-in speaker available, trying without")
 
         model.tts_to_file(**tts_kwargs)
 
+        audio_data = Path(out_path).read_bytes()
+
         def iter_wav():
-            with open(out_path, "rb") as f:
-                while chunk := f.read(8192):
-                    yield chunk
+            yield audio_data
 
         return StreamingResponse(
             iter_wav(),
@@ -188,9 +181,10 @@ async def speak(req: SpeakRequest):
             headers={"Content-Disposition": "inline; filename=speech.wav"},
         )
     except Exception as e:
-        Path(out_path).unlink(missing_ok=True)
-        logger.error(f"TTS error: {e}")
+        logger.error(f"TTS error: {e}", exc_info=True)
         raise HTTPException(500, f"TTS failed: {str(e)}")
+    finally:
+        Path(out_path).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

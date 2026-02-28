@@ -7,7 +7,7 @@ import {
   AetherInputBar,
   type AetherCanvasHandle,
 } from './components';
-import { useAetherInput } from './hooks';
+import { useAetherInput, useVoiceAgent } from './hooks';
 
 export function AetherPage() {
   const canvasRef = useRef<AetherCanvasHandle>(null);
@@ -30,15 +30,21 @@ export function AetherPage() {
     setDialogueText(text);
   }, []);
 
+  // Text input flow (existing)
   const { sendInput } = useAetherInput({
     onUiReady: handleUiReady,
     onDialogue: handleDialogue,
   });
 
+  // Voice agent flow (new)
+  const { isActive: agentActive, phase: agentPhase, startAgent, stopAgent } = useVoiceAgent({
+    captureScreenshot: () => canvasRef.current?.captureScreenshot() ?? Promise.resolve(null),
+    onUiReady: handleUiReady,
+  });
+
   const handleSubmit = useCallback(
     async (text: string) => {
       setDialogueText(null);
-      // Screenshot comes from iframe content via handle
       const screenshot = await canvasRef.current?.captureScreenshot() ?? null;
       await sendInput(text, screenshot);
     },
@@ -57,7 +63,11 @@ export function AetherPage() {
 
       <AetherInputBar
         onSubmit={handleSubmit}
-        disabled={aetherIsGenerating}
+        disabled={aetherIsGenerating && !agentActive}
+        agentActive={agentActive}
+        agentPhase={agentPhase}
+        onAgentStart={startAgent}
+        onAgentStop={stopAgent}
       />
     </div>
   );
