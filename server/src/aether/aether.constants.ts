@@ -5,7 +5,7 @@ import { BACKEND_APIS_DOC } from '../generate/generate.constants';
  * Override via env vars if needed.
  */
 export const ORCHESTRATOR_MODEL = process.env.AETHER_ORCHESTRATOR_MODEL ?? 'gemma3:4b';
-export const CODER_MODEL = process.env.AETHER_CODER_MODEL ?? 'qwen3:latest';
+export const CODER_MODEL = process.env.AETHER_CODER_MODEL ?? 'qwen2.5-coder:7b';
 
 /**
  * Voice service base URL (Python FastAPI).

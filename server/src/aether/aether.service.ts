@@ -26,6 +26,8 @@ interface OrchestratorResult {
 
 const MAX_HTML_CHARS = 24_000; // ~6k tokens, truncate if larger
 const MAX_TOOL_ROUNDS = 3;
+/** Cap tool data so the coder prompt isn't dominated by search results and the model keeps the "build widget" task */
+const MAX_TOOL_CONTEXT_CHARS = 10_000;
 
 @Injectable()
 export class AetherService {
@@ -78,12 +80,18 @@ export class AetherService {
               dto.currentHtml,
               emit,
             );
-            const toolInstruction = `TASK: Output ONLY a complete HTML document starting with <!DOCTYPE html>. Build a glass-style widget that displays the data below. Do not output an article, explanation, or plain text — only the full HTML page.
+            const truncatedData =
+              toolContext.length > MAX_TOOL_CONTEXT_CHARS
+                ? toolContext.slice(0, MAX_TOOL_CONTEXT_CHARS) + '\n\n[Data truncated. Use the above to build the widget.]'
+                : toolContext;
+            const toolInstruction = `TASK: Output ONLY a complete HTML document starting with <!DOCTYPE html>. Build a glass-style widget (e.g. timeline, table, or cards) that DISPLAYS the data below — do not paste the raw text. Only HTML.
 
-${result.instruction}
+USER REQUEST (follow this exactly): ${result.instruction}
 
 Available data from tools:
-${toolContext}`;
+${truncatedData}
+
+REMINDER: Your reply must be a single HTML document. First character: <. Build a widget that shows the data above; do not output the data as plain text. Respect the USER REQUEST: if they asked for "10 последних" or "10 latest" or "N items", show only that many — do not list everything from the data.`;
             await this.streamUiGeneration(dto.currentHtml, toolInstruction, emit);
           } else {
             // generate_ui: stream qwen3-coder
