@@ -48,6 +48,16 @@ export class AetherService {
   }
 
   /**
+   * When USE_ORCHESTRATOR=false (default), skip orchestrator entirely.
+   * The coder model receives screenshot + currentHtml + user text directly.
+   * Best with vision-capable coding models: qwen2.5vl:7b, minicpm-v:8b, etc.
+   */
+  private get useOrchestrator(): boolean {
+    const val = this.config.get<string>('USE_ORCHESTRATOR', 'false');
+    return val.toLowerCase() === 'true';
+  }
+
+  /**
    * Main SSE stream for aether input.
    * Emits JSON event objects:
    *   { type: 'route',   action, instruction }
@@ -65,37 +75,42 @@ export class AetherService {
 
       const run = async () => {
         try {
-          // 1. Call orchestrator (MiniCPM) with screenshot
-          const result = await this.callOrchestrator(dto);
-          this.logger.log(`[Orchestrator] action=${result.action} instruction=${result.instruction}`);
-          emit({ type: 'route', action: result.action, instruction: result.instruction });
+          if (this.useOrchestrator) {
+            // ── Orchestrator mode (USE_ORCHESTRATOR=true) ──────────────────
+            // Two-step: orchestrator decides action → coder executes.
+            // Preserved for cases where explicit routing is needed.
+            const result = await this.callOrchestrator(dto);
+            this.logger.log(`[Orchestrator] action=${result.action} instruction=${result.instruction}`);
+            emit({ type: 'route', action: result.action, instruction: result.instruction });
 
-          if (result.action === 'dialogue') {
-            // Direct answer from MiniCPM
-            emit({ type: 'dialogue', text: result.response ?? result.instruction });
-          } else if (result.action === 'tool') {
-            // Execute tools then let coder build a widget with the data
-            const toolContext = await this.executeToolsForAether(
-              result.instruction,
-              dto.currentHtml,
-              emit,
-            );
-            const truncatedData =
-              toolContext.length > MAX_TOOL_CONTEXT_CHARS
-                ? toolContext.slice(0, MAX_TOOL_CONTEXT_CHARS) + '\n\n[Data truncated. Use the above to build the widget.]'
-                : toolContext;
-            const toolInstruction = `TASK: Output ONLY a complete HTML document starting with <!DOCTYPE html>. Build a glass-style widget (e.g. timeline, table, or cards) that DISPLAYS the data below — do not paste the raw text. Only HTML.
+            if (result.action === 'dialogue') {
+              emit({ type: 'dialogue', text: result.response ?? result.instruction });
+            } else if (result.action === 'tool') {
+              const toolContext = await this.executeToolsForAether(
+                result.instruction,
+                dto.currentHtml,
+                emit,
+              );
+              const truncatedData =
+                toolContext.length > MAX_TOOL_CONTEXT_CHARS
+                  ? toolContext.slice(0, MAX_TOOL_CONTEXT_CHARS) + '\n\n[Data truncated. Use the above to build the widget.]'
+                  : toolContext;
+              const toolInstruction = `TASK: Output ONLY a complete HTML document starting with <!DOCTYPE html>. Build a glass-style widget (e.g. timeline, table, or cards) that DISPLAYS the data below — do not paste the raw text. Only HTML.
 
 USER REQUEST (follow this exactly): ${result.instruction}
 
 Available data from tools:
 ${truncatedData}
 
-REMINDER: Your reply must be a single HTML document. First character: <. Build a widget that shows the data above; do not output the data as plain text. Respect the USER REQUEST: if they asked for "10 последних" or "10 latest" or "N items", show only that many — do not list everything from the data.`;
-            await this.streamUiGeneration(dto.currentHtml, toolInstruction, emit);
+REMINDER: Your reply must be a single HTML document. First character: <. Build a widget that shows the data above; do not output the data as plain text. Respect the USER REQUEST: Show only that many as requested.`;
+              await this.streamUiGeneration(dto.currentHtml, toolInstruction, emit);
+            } else {
+              await this.streamUiGeneration(dto.currentHtml, result.instruction, emit);
+            }
           } else {
-            // generate_ui: stream qwen3-coder
-            await this.streamUiGeneration(dto.currentHtml, result.instruction, emit);
+            // ── Direct mode (USE_ORCHESTRATOR=false, default) ──────────────
+            // Single model receives screenshot + currentHtml + user text directly.
+            await this.runDirect(dto, emit);
           }
 
           emit({ type: 'done' });
@@ -143,6 +158,42 @@ REMINDER: Your reply must be a single HTML document. First character: <. Build a
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Direct mode: one model does everything — sees screenshot, currentHtml, user text.
+   * No routing, no tool detection — just streams HTML tokens.
+   */
+  private async runDirect(
+    dto: AetherInputDto,
+    emit: (obj: Record<string, unknown>) => void,
+  ): Promise<void> {
+    this.logger.log(`[Direct] model=${this.coderModel} text="${dto.text}" screenshot=${!!dto.screenshot}`);
+    emit({ type: 'route', action: 'generate_ui', instruction: dto.text });
+
+    const truncatedHtml =
+      dto.currentHtml.length > MAX_HTML_CHARS
+        ? dto.currentHtml.slice(0, MAX_HTML_CHARS) + '\n<!-- truncated -->'
+        : dto.currentHtml;
+
+    const userMessage: OllamaMessage = {
+      role: 'user',
+      content: `<CURRENT_HTML>\n${truncatedHtml}\n</CURRENT_HTML>\n\nINSTRUCTION: ${dto.text}`,
+      ...(dto.screenshot ? { images: [dto.screenshot] } : {}),
+    };
+
+    const messages: OllamaMessage[] = [
+      { role: 'system', content: CODER_SYSTEM_PROMPT },
+      ...dto.history.slice(-4).map((m) => ({
+        role: m.role as OllamaMessage['role'],
+        content: m.content,
+      })),
+      userMessage,
+    ];
+
+    for await (const token of this.ollama.streamMessages(messages, this.coderModel)) {
+      emit({ type: 'token', text: token });
+    }
+  }
 
   private async callOrchestrator(dto: AetherInputDto): Promise<OrchestratorResult> {
     if (dto.screenshot) {
