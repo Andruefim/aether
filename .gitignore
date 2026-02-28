@@ -12,3 +12,10 @@ aether.db
 .cursor/
 
 voice-service/.venv
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
