@@ -34,6 +34,52 @@ interface VoiceAgentResult {
 const MAX_HTML_CHARS = 24_000;
 const MAX_TOOL_CONTEXT_CHARS = 10_000;
 
+/**
+ * Keywords that ALWAYS require generate_ui — regardless of what the model said.
+ * Small models often classify these as "speak" even though the UI must change.
+ */
+const UI_MUTATION_PATTERNS = [
+  // Russian — removal
+  /удал[иьите]/i, /убер[иьи]/i, /сотр[иь]/i, /очист[иь]/i, /закр[ойы]/i, /спрят[ьа]/i,
+  // Russian — addition/creation
+  /добав[ьи]/i, /создай/i, /открой/i, /покаж[иь]/i, /выведи/i, /нарисуй/i,
+  // Russian — modification
+  /измен[иь]/i, /сдел[ай]/i, /поменяй/i, /перекрас[ьь]/i, /обнов[иь]/i,
+  // English — removal
+  /\b(remove|delete|close|hide|clear|dismiss|get rid of)\b/i,
+  // English — addition/creation
+  /\b(add|create|open|show|display|draw|build|make|put)\b/i,
+  // English — modification
+  /\b(change|update|modify|resize|move|rename|replace|edit)\b/i,
+];
+
+/**
+ * If the model chose "speak" but user text contains UI-mutation keywords,
+ * force generate_ui with a derived instruction.
+ */
+function forceUiActionIfNeeded(
+  result: VoiceAgentResult,
+  userText: string,
+  hasExistingUi: boolean,
+): VoiceAgentResult {
+  if (result.action === 'generate_ui') return result; // already correct
+
+  const needsUi = UI_MUTATION_PATTERNS.some((p) => p.test(userText));
+  if (!needsUi) return result;
+
+  // Build instruction: prefer what the model said (stripped), fall back to raw user text
+  const baseInstruction = result.instruction?.trim() || userText;
+  const instruction = hasExistingUi
+    ? `${baseInstruction}. Keep everything else in the interface unchanged. Use glass style.`
+    : `${baseInstruction}. Use glass panels with rgba(255,255,255,0.08) background and white text.`;
+
+  return {
+    action: 'generate_ui',
+    text: result.text, // keep original spoken confirmation
+    instruction,
+  };
+}
+
 @Injectable()
 export class AetherService {
   private readonly logger = new Logger(AetherService.name);
@@ -94,21 +140,33 @@ export class AetherService {
 
       const run = async () => {
         try {
-          const result = await this.callVoiceAgent(dto);
-          this.logger.log(`[VoiceAgent] action=${result.action} text="${result.text}"`);
+          let result = await this.callVoiceAgent(dto);
 
-          // Emit spoken text first — client starts TTS immediately
+          // ── Heuristic override ────────────────────────────────────────────
+          // Small models (gemma3:4b, etc.) often return "speak" even when
+          // the user wants to mutate the UI. Force generate_ui when keywords match.
+          const hasExistingUi = dto.currentHtml.length > 500;
+          const before = result.action;
+          result = forceUiActionIfNeeded(result, dto.text, hasExistingUi);
+          if (result.action !== before) {
+            this.logger.log(`[VoiceAgent] Overrode action: speak → generate_ui (keyword match in "${dto.text}")`);
+          }
+
+          this.logger.log(`[VoiceAgent] action=${result.action} text="${result.text}" instruction="${result.instruction ?? ''}"`);
+
+          // Always emit spoken text first
           emit({ type: 'speak', text: result.text });
 
           if (result.action === 'generate_ui' && result.instruction) {
-            emit({ type: 'route', action: 'generate_ui', instruction: result.instruction });
-            await this.streamUiGeneration(dto.currentHtml, result.instruction, emit);
+            const instruction = this.sanitizeVoiceInstruction(result.instruction);
+            emit({ type: 'route', action: 'generate_ui', instruction });
+            await this.streamUiGeneration(dto.currentHtml, instruction, emit);
           }
 
           emit({ type: 'done' });
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Unknown error';
-          this.logger.error(`VoiceAgent error: ${msg}`);
+          this.logger.error(`VoiceAgent error: ${msg}`, err instanceof Error ? err.stack : '');
           emit({ type: 'speak', text: 'Sorry, something went wrong.' });
           emit({ type: 'error', message: msg });
         } finally {
@@ -126,11 +184,7 @@ export class AetherService {
     const form = new FormData();
     const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType });
     form.append('audio', blob, 'recording.webm');
-
-    const res = await fetch(`${VOICE_SERVICE_URL}/transcribe`, {
-      method: 'POST',
-      body: form,
-    });
+    const res = await fetch(`${VOICE_SERVICE_URL}/transcribe`, { method: 'POST', body: form });
     if (!res.ok) throw new Error(`Transcribe failed: ${res.statusText}`);
     return res.json() as Promise<{ text: string; language: string }>;
   }
@@ -155,13 +209,12 @@ export class AetherService {
     dto: AetherInputDto,
     emit: (obj: Record<string, unknown>) => void,
   ): Promise<void> {
-    this.logger.log(`[Direct] model=${this.coderModel} text="${dto.text}" screenshot=${!!dto.screenshot}`);
+    this.logger.log(`[Direct] model=${this.coderModel} text="${dto.text}"`);
     emit({ type: 'route', action: 'generate_ui', instruction: dto.text });
 
-    const truncatedHtml = this.truncateHtml(dto.currentHtml);
     const userMessage: OllamaMessage = {
       role: 'user',
-      content: `<CURRENT_HTML>\n${truncatedHtml}\n</CURRENT_HTML>\n\nINSTRUCTION: ${dto.text}`,
+      content: `<CURRENT_HTML>\n${this.truncateHtml(dto.currentHtml)}\n</CURRENT_HTML>\n\nINSTRUCTION: ${dto.text}`,
       ...(dto.screenshot ? { images: [dto.screenshot] } : {}),
     };
 
@@ -201,10 +254,9 @@ export class AetherService {
   // ── LLM calls ───────────────────────────────────────────────────────────────
 
   private async callVoiceAgent(dto: AetherInputDto): Promise<VoiceAgentResult> {
-    const truncatedHtml = this.truncateHtml(dto.currentHtml);
     const userMessage: OllamaMessage = {
       role: 'user',
-      content: `<CURRENT_HTML>\n${truncatedHtml}\n</CURRENT_HTML>\n\nUser said: "${dto.text}"`,
+      content: `<CURRENT_HTML>\n${this.truncateHtml(dto.currentHtml)}\n</CURRENT_HTML>\n\nUser said: "${dto.text}"`,
       ...(dto.screenshot ? { images: [dto.screenshot] } : {}),
     };
 
@@ -214,7 +266,6 @@ export class AetherService {
       userMessage,
     ];
 
-    // format: 'json' forces Ollama to return valid JSON — fixes non-JSON responses
     const response = await this.ollama.chat(messages, undefined, this.orchestratorModel, 'json');
     const content = response.content?.trim() ?? '';
 
@@ -224,8 +275,7 @@ export class AetherService {
       if (!parsed.action || !parsed.text) throw new Error('Missing action or text');
       return parsed;
     } catch {
-      this.logger.warn('[VoiceAgent] Could not parse JSON, treating as speak:', content.slice(0, 100));
-      // Last resort: extract any text-like content and speak it
+      this.logger.warn('[VoiceAgent] Could not parse JSON:', content.slice(0, 100));
       const text = content.replace(/[{}"]/g, '').replace(/action:|text:|instruction:/g, '').trim().slice(0, 200);
       return { action: 'speak', text: text || 'Готов помочь.' };
     }
@@ -244,7 +294,6 @@ export class AetherService {
       userMessage,
     ];
 
-    // format: 'json' forces valid JSON output from orchestrator
     const response = await this.ollama.chat(messages, undefined, this.orchestratorModel, 'json');
     const content = response.content?.trim() ?? '';
 
@@ -254,21 +303,22 @@ export class AetherService {
       if (!parsed.action || !parsed.instruction) throw new Error('Invalid orchestrator response');
       return parsed;
     } catch {
-      this.logger.warn('Orchestrator returned non-JSON, defaulting to dialogue:', content.slice(0, 100));
+      this.logger.warn('Orchestrator non-JSON:', content.slice(0, 100));
       return { action: 'dialogue', instruction: content, response: content };
     }
   }
+
+  // ── UI generation ────────────────────────────────────────────────────────────
 
   private async streamUiGeneration(
     currentHtml: string,
     instruction: string,
     emit: (obj: Record<string, unknown>) => void,
   ): Promise<void> {
-    const truncatedHtml = this.truncateHtml(currentHtml);
     const formatReminder = instruction.includes('Available data from tools') || instruction.includes('TASK: Output ONLY')
       ? 'Reply with ONLY the HTML document. First character must be <.\n\n'
       : '';
-    const userContent = `${formatReminder}<CURRENT_HTML>\n${truncatedHtml}\n</CURRENT_HTML>\n\nINSTRUCTION: ${instruction}`;
+    const userContent = `${formatReminder}<CURRENT_HTML>\n${this.truncateHtml(currentHtml)}\n</CURRENT_HTML>\n\nINSTRUCTION: ${instruction}`;
 
     const messages: OllamaMessage[] = [
       { role: 'system', content: CODER_SYSTEM_PROMPT },
@@ -306,9 +356,21 @@ export class AetherService {
     return results.join('\n\n');
   }
 
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
   private truncateHtml(html: string): string {
     return html.length > MAX_HTML_CHARS
       ? html.slice(0, MAX_HTML_CHARS) + '\n<!-- truncated -->'
       : html;
+  }
+
+  private sanitizeVoiceInstruction(instruction: string): string {
+    let s = instruction.trim();
+    s = s.replace(/<start_of_turn>\s*(?:user|model)\s*>\s*/gi, '').replace(/<\/?start_of_turn>/gi, '').trim();
+    if (/<\s*!?\s*DOCTYPE\s+html/i.test(s) || /<\s*html[\s>]/i.test(s)) {
+      this.logger.warn('[VoiceAgent] Instruction looked like HTML, using fallback');
+      return 'Update the interface as requested by the user. Use glass style: rgba(255,255,255,0.08) panels, white text.';
+    }
+    return s.slice(0, 500);
   }
 }

@@ -63,11 +63,20 @@ export class OllamaService {
     if (tools) body.tools = tools;
     if (format) body.format = format;
 
-    const res = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Ollama fetch failed: ${msg}`);
+      throw new Error(
+        `Ollama unreachable at ${this.baseUrl}. Is Ollama running? (${msg})`,
+      );
+    }
 
     if (!res.ok) {
       const bodyText = await res.text();
