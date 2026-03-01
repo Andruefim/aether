@@ -23,7 +23,7 @@ export interface AetherMessage {
   timestamp: number;
 }
 
-export type AppMode = 'desktop' | 'aether';
+export type AppMode = 'desktop' | 'aether' | 'nova';
 
 interface AetherStore {
   // ── App mode ──────────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ interface AetherStore {
   generativePreviewEnabled: boolean;
   setGenerativePreviewEnabled: (value: boolean) => void;
 
-  // ── Aether ────────────────────────────────────────────────────────────────
+  // ── Aether / Nova ─────────────────────────────────────────────────────────
   /** Current live HTML displayed in AetherCanvas */
   aetherHtml: string;
   /** Previous stable HTML — fallback if generation breaks */
@@ -114,7 +114,7 @@ export const useAetherStore = create<AetherStore>((set) => ({
   generativePreviewEnabled: true,
   setGenerativePreviewEnabled: (value) => set({ generativePreviewEnabled: value }),
 
-  // ── Aether ────────────────────────────────────────────────────────────────
+  // ── Aether / Nova ─────────────────────────────────────────────────────────
   aetherHtml: '',
   aetherPreviousHtml: '',
   aetherHistory: [],
@@ -128,7 +128,7 @@ export const useAetherStore = create<AetherStore>((set) => ({
   setAetherHtml: (html) => set({ aetherHtml: html }),
   setAetherPreviousHtml: (html) => set({ aetherPreviousHtml: html }),
   pushAetherMessage: (msg) => set((state) => ({
-    aetherHistory: [...state.aetherHistory.slice(-19), msg], // keep last 20 messages
+    aetherHistory: [...state.aetherHistory.slice(-19), msg],
   })),
   setAetherIsGenerating: (v) => set({ aetherIsGenerating: v }),
   setAetherIsListening: (v) => set({ aetherIsListening: v }),

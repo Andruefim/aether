@@ -3,11 +3,12 @@ import { useAetherStore, type AppMode } from '../core';
 
 const MODES: { id: AppMode; label: string }[] = [
   { id: 'desktop', label: 'Desktop' },
-  { id: 'aether', label: 'Aether' },
+  { id: 'aether',  label: 'Aether'  },
+  { id: 'nova',    label: 'Nova'    },
 ];
 
 export function ModeSwitch() {
-  const appMode = useAetherStore((s) => s.appMode);
+  const appMode    = useAetherStore((s) => s.appMode);
   const setAppMode = useAetherStore((s) => s.setAppMode);
 
   return (
@@ -19,7 +20,9 @@ export function ModeSwitch() {
           onClick={() => setAppMode(id)}
           className={`px-5 py-2 rounded-xl text-sm font-medium transition-colors ${
             appMode === id
-              ? 'bg-white/20 text-white'
+              ? id === 'nova'
+                ? 'bg-indigo-500/30 text-indigo-200 border border-indigo-400/30'
+                : 'bg-white/20 text-white'
               : 'text-white/70 hover:text-white hover:bg-white/10'
           }`}
         >
