@@ -1,46 +1,66 @@
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { useAetherInput, useVoiceAgent, type AgentPhase } from '../aether/hooks';
+import { useVoiceAgent } from '../aether/hooks';
 import { AetherInputBar } from '../aether/components';
 import { NovaScene, NovaStatusOverlay } from './components';
+import { useNovaInput } from './hooks';
 import { useAetherStore } from '../../core';
+import type { IncomingToken, StreamType } from './components/TokenGlyphSystem';
 
 /**
- * NovaPage — Aether Nova mode.
- *
- * Renders a full-screen Three.js scene with the reactive plasma orb.
- * Reuses the existing Aether hooks and API endpoints so the orb state
- * (isGenerating / isListening / isSpeaking) drives all shader uniforms.
- *
- * Phase 1 scope: orb + dialogue overlay. HTML generation results are
- * acknowledged with a dialogue response instead of displaying an iframe.
+ * Drips a full string into the glyph bucket word-by-word with a delay.
+ * Used for voice responses (we get the full text at once, not streamed).
+ * Returns a cancel fn.
  */
-export function NovaPage() {
-  const [dialogueText, setDialogueText] = useState<string | null>(null);
+function staggerWords(
+  text: string,
+  bucket: React.MutableRefObject<IncomingToken[]>,
+  stream: StreamType,
+  color: string,
+  intervalMs = 60,
+): () => void {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  let i = 0;
+  const id = setInterval(() => {
+    if (i >= words.length) { clearInterval(id); return; }
+    bucket.current.push({ text: words[i] + ' ', stream, color });
+    i++;
+  }, intervalMs);
+  return () => clearInterval(id);
+}
 
+export function NovaPage() {
   const aetherIsGenerating = useAetherStore((s) => s.aetherIsGenerating);
 
-  const handleDialogue = useCallback((text: string) => {
-    setDialogueText(text);
-  }, []);
+  // Shared mutable bucket — TokenGlyphSystem reads .current every animation frame
+  const tokenBucketRef = useRef<IncomingToken[]>([]);
+  const staggerCancelRef = useRef<(() => void) | null>(null);
 
-  // Text input flow — no iframe, so onUiReady is a no-op
-  const { sendInput } = useAetherInput({
-    onUiReady: () => {
-      // Nova Phase 1: HTML generation silently completes — we just show the spoken confirmation
+  // Text input → /api/nova/input (3 parallel streams)
+  const { sendInput } = useNovaInput({
+    onTone: (tone) => {
+      console.log('[Nova] tone:', tone); // Phase 3: → orb uniform
     },
-    onDialogue: handleDialogue,
+    onDialogue: () => {
+      // Main response already arrives as glyphs via tokenBucketRef — no overlay needed
+    },
+    tokenBucketRef,
   });
 
-  // Voice agent flow
+  // Voice agent — add onSpeak to intercept AI text before TTS
   const { isActive: agentActive, phase: agentPhase, startAgent, stopAgent } = useVoiceAgent({
     captureScreenshot: async () => null,
     onUiReady: () => {},
+    onSpeak: (text: string) => {
+      // Cancel any previous stagger, start new one
+      staggerCancelRef.current?.();
+      staggerCancelRef.current = staggerWords(text, tokenBucketRef, 'voice', '#c084fc', 60);
+    },
   });
 
   const handleSubmit = useCallback(
     async (text: string) => {
-      setDialogueText(null);
+      staggerCancelRef.current?.();
       await sendInput(text, null);
     },
     [sendInput],
@@ -48,25 +68,22 @@ export function NovaPage() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#05040f]">
-      {/* ── Three.js scene ─────────────────────────────────────────────── */}
+      {/* Three.js canvas — full screen */}
       <Canvas
-        camera={{ position: [0, 0, 3.2], fov: 50 }}
+        camera={{ position: [0, 0, 4.8], fov: 55 }}
         gl={{ antialias: true, alpha: false }}
-        onCreated={({ gl, scene }) => {
-          gl.setClearColor('#05040f', 1);
-        }}
+        onCreated={({ gl }) => { gl.setClearColor('#05040f', 1); }}
         style={{ position: 'absolute', inset: 0 }}
       >
-        <NovaScene />
+        <NovaScene tokenBucketRef={tokenBucketRef} />
       </Canvas>
 
-      {/* ── UI overlays ────────────────────────────────────────────────── */}
+      {/* Status pill only (no dialogue bubble) */}
       <NovaStatusOverlay
-        dialogueText={dialogueText}
-        onDismiss={() => setDialogueText(null)}
+        dialogueText={null}
+        onDismiss={() => {}}
       />
 
-      {/* Reuse AetherInputBar — same component, different page context */}
       <AetherInputBar
         onSubmit={handleSubmit}
         disabled={aetherIsGenerating && !agentActive}
