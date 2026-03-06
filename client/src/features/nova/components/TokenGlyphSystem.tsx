@@ -51,6 +51,9 @@ const IMPULSE      = 0.015;
 const SETTLE_SPRING = 0.003;
 const SETTLE_DAMP   = 0.96;
 
+// Delay between consecutive association word spawns (ms)
+const ASSOC_STAGGER_MS = 220;
+
 // Top-right corner layout params (Three.js world units)
 const SETTLE_START_X  =  0.55;  // leftmost word column
 const SETTLE_START_Y  =  1.85;  // top row
@@ -111,6 +114,9 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
   const wordBuf        = useRef('');
   const slotIdx        = useRef(0);
   const lastSettleText = useRef('');
+  // Queue of association words waiting to be spawned with stagger
+  const assocQueueRef  = useRef<{ word: string; color: string }[]>([]);
+  const assocTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Pre-bake positions once — stable across renders
   const positions  = useMemo(
     () => Array.from({ length: MAX_GLYPHS }, (_, i) => orbitPos(i, MAX_GLYPHS)),
@@ -130,7 +136,14 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
         wordBuf.current = parts.pop() ?? '';
         for (const part of parts) {
           const w = part.trim();
-          if (w && !SKIP.test(w)) spawnGlyph(group, w, tok.stream, tok.color);
+          if (!w || SKIP.test(w)) continue;
+          if (tok.stream === 'association') {
+            // Queue association words — spawn one by one with stagger
+            assocQueueRef.current.push({ word: w, color: tok.color });
+            scheduleAssocSpawn(group);
+          } else {
+            spawnGlyph(group, w, tok.stream, tok.color);
+          }
         }
       }
       bucketRef.current = [];
@@ -150,7 +163,7 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
       const g = glyphs.current[i];
 
       if (g.phase === 'settle') {
-        // Stronger spring toward settle target
+        // Slow spring toward settle target
         g.velocity.x += (g.target.x - g.mesh.position.x) * SETTLE_SPRING;
         g.velocity.y += (g.target.y - g.mesh.position.y) * SETTLE_SPRING;
         g.velocity.z += (g.target.z - g.mesh.position.z) * SETTLE_SPRING;
@@ -209,8 +222,6 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
       .split(/\s+/)
       .filter((w) => w.length >= 1 && !SKIP.test(w));
 
-    // Map word → first available glyph matching that word
-    // We process glyphs in spawn order (index 0 = oldest)
     const wordQueue = [...words];
     const mainGlyphs = glyphs.current.filter(
       (g) => g.stream === 'main' || g.stream === 'voice',
@@ -254,6 +265,17 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
     }
   }
 
+  function scheduleAssocSpawn(group: THREE.Group) {
+    if (assocTimerRef.current !== null) return; // already ticking
+    function spawnNext() {
+      const item = assocQueueRef.current.shift();
+      if (!item) { assocTimerRef.current = null; return; }
+      spawnGlyph(group, item.word, 'association', item.color);
+      assocTimerRef.current = setTimeout(spawnNext, ASSOC_STAGGER_MS);
+    }
+    assocTimerRef.current = setTimeout(spawnNext, 0);
+  }
+
   function spawnGlyph(group: THREE.Group, text: string, stream: StreamType, color: string) {
     if (!TroikaText) return;
 
@@ -265,7 +287,7 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
     const mesh     = new TroikaText();
     mesh.text      = text;
     mesh.fontSize  = FS[stream];
-    mesh.color     = color;        // violet/blue/amber from stream
+    mesh.color     = color;
     mesh.fillOpacity  = 0;
     mesh.anchorX   = 'center';
     mesh.anchorY   = 'middle';
@@ -307,6 +329,11 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
 
   useEffect(() => {
     return () => {
+      if (assocTimerRef.current !== null) {
+        clearTimeout(assocTimerRef.current);
+        assocTimerRef.current = null;
+      }
+      assocQueueRef.current = [];
       glyphs.current.forEach((g) => {
         groupRef.current?.remove(g.mesh);
         g.mesh.dispose();
