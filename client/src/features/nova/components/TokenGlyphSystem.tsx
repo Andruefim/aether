@@ -47,9 +47,9 @@ const SPRING       = 0.009;
 const DAMP         = 0.90;
 const IMPULSE      = 0.015;
 
-// Settle spring — faster/tighter than orbit spring
-const SETTLE_SPRING = 0.022;
-const SETTLE_DAMP   = 0.82;
+// Settle spring — slow, smooth drift toward corner
+const SETTLE_SPRING = 0.003;
+const SETTLE_DAMP   = 0.96;
 
 // Top-right corner layout params (Three.js world units)
 const SETTLE_START_X  =  0.55;  // leftmost word column
@@ -217,18 +217,24 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
     );
 
     // Match glyphs to words by their text (greedy, in order)
+    // Each word starts flying with a stagger delay so they arrive one by one
+    const SETTLE_STAGGER_MS = 120;
     let settleIdx = 0;
     for (const word of wordQueue) {
       const match = mainGlyphs.find(
         (g) => g.word === word && g.settleIndex === -1 && g.phase !== 'out',
       );
       if (match) {
-        match.phase       = 'settle';
-        match.settleIndex = settleIdx;
-        match.target      = settlePos(settleIdx);
-        // Boost font size slightly for readability in settled form
-        match.mesh.fontSize = 0.062;
-        match.mesh.color    = '#e8d8ff';
+        const idx = settleIdx;
+        const target = settlePos(idx);
+        // Stagger: delay each word before switching its target
+        setTimeout(() => {
+          match.phase       = 'settle';
+          match.settleIndex = idx;
+          match.target      = target;
+          match.mesh.fontSize = 0.062;
+          match.mesh.color    = '#e8d8ff';
+        }, idx * SETTLE_STAGGER_MS);
         settleIdx++;
       }
     }
