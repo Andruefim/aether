@@ -18,9 +18,12 @@ interface GlyphState {
   target: THREE.Vector3;
   velocity: THREE.Vector3;
   fillOpacity: number;
-  phase: 'in' | 'hold' | 'out';
+  phase: 'in' | 'hold' | 'out' | 'settle';
   holdTimer: number;
   stream: StreamType;
+  word: string;
+  // settle word order index (set when settling)
+  settleIndex: number;
 }
 
 // ─── Camera: z=4.8, fov=55
@@ -43,6 +46,17 @@ const FADE_OUT     = 0.5;
 const SPRING       = 0.009;
 const DAMP         = 0.90;
 const IMPULSE      = 0.015;
+
+// Settle spring — faster/tighter than orbit spring
+const SETTLE_SPRING = 0.022;
+const SETTLE_DAMP   = 0.82;
+
+// Top-right corner layout params (Three.js world units)
+const SETTLE_START_X  =  0.55;  // leftmost word column
+const SETTLE_START_Y  =  1.85;  // top row
+const SETTLE_COL_W    =  0.27;  // horizontal step between words
+const SETTLE_ROW_H    =  0.17;  // vertical step between rows
+const SETTLE_COLS     =  6;     // words per row before wrap
 
 const FS: Record<StreamType, number> = {
   main:        0.068,
@@ -74,15 +88,29 @@ function orbitPos(i: number, total: number): THREE.Vector3 {
   return new THREE.Vector3(cx, cy, z);
 }
 
-interface Props {
-  bucketRef: React.MutableRefObject<IncomingToken[]>;
+/** Compute settled grid position for word at index `idx` in the top-right corner */
+function settlePos(idx: number): THREE.Vector3 {
+  const col = idx % SETTLE_COLS;
+  const row = Math.floor(idx / SETTLE_COLS);
+  return new THREE.Vector3(
+    SETTLE_START_X + col * SETTLE_COL_W,
+    SETTLE_START_Y - row * SETTLE_ROW_H,
+    0.05,
+  );
 }
 
-export function TokenGlyphSystem({ bucketRef }: Props) {
-  const groupRef   = useRef<THREE.Group>(null!);
-  const glyphs     = useRef<GlyphState[]>([]);
-  const wordBuf    = useRef('');
-  const slotIdx    = useRef(0);
+interface Props {
+  bucketRef: React.MutableRefObject<IncomingToken[]>;
+  /** When set to a non-empty string, triggers the "settle" animation for main-stream glyphs */
+  settleSignalRef: React.MutableRefObject<string>;
+}
+
+export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
+  const groupRef       = useRef<THREE.Group>(null!);
+  const glyphs         = useRef<GlyphState[]>([]);
+  const wordBuf        = useRef('');
+  const slotIdx        = useRef(0);
+  const lastSettleText = useRef('');
   // Pre-bake positions once — stable across renders
   const positions  = useMemo(
     () => Array.from({ length: MAX_GLYPHS }, (_, i) => orbitPos(i, MAX_GLYPHS)),
@@ -108,17 +136,32 @@ export function TokenGlyphSystem({ bucketRef }: Props) {
       bucketRef.current = [];
     }
 
+    // ── Settle trigger ────────────────────────────────────────────────────────
+    const sig = settleSignalRef.current;
+    if (sig && sig !== lastSettleText.current) {
+      lastSettleText.current = sig;
+      triggerSettle(sig);
+    }
+
     // ── Physics + fade ────────────────────────────────────────────────────────
     const dt = Math.min(delta, 0.05) * 60;
 
     for (let i = glyphs.current.length - 1; i >= 0; i--) {
       const g = glyphs.current[i];
 
-      // Spring toward target
-      g.velocity.x += (g.target.x - g.mesh.position.x) * SPRING;
-      g.velocity.y += (g.target.y - g.mesh.position.y) * SPRING;
-      g.velocity.z += (g.target.z - g.mesh.position.z) * SPRING;
-      g.velocity.multiplyScalar(DAMP);
+      if (g.phase === 'settle') {
+        // Stronger spring toward settle target
+        g.velocity.x += (g.target.x - g.mesh.position.x) * SETTLE_SPRING;
+        g.velocity.y += (g.target.y - g.mesh.position.y) * SETTLE_SPRING;
+        g.velocity.z += (g.target.z - g.mesh.position.z) * SETTLE_SPRING;
+        g.velocity.multiplyScalar(SETTLE_DAMP);
+      } else {
+        // Spring toward orbit target
+        g.velocity.x += (g.target.x - g.mesh.position.x) * SPRING;
+        g.velocity.y += (g.target.y - g.mesh.position.y) * SPRING;
+        g.velocity.z += (g.target.z - g.mesh.position.z) * SPRING;
+        g.velocity.multiplyScalar(DAMP);
+      }
 
       g.mesh.position.x += g.velocity.x * dt;
       g.mesh.position.y += g.velocity.y * dt;
@@ -136,6 +179,9 @@ export function TokenGlyphSystem({ bucketRef }: Props) {
       } else if (g.phase === 'hold') {
         g.holdTimer -= delta;
         if (g.holdTimer <= 0) g.phase = 'out';
+      } else if (g.phase === 'settle') {
+        // Fade in if not yet visible, then hold indefinitely
+        g.fillOpacity = Math.min(1, g.fillOpacity + FADE_IN * delta);
       } else {
         g.fillOpacity = Math.max(0, g.fillOpacity - FADE_OUT * delta);
         if (g.fillOpacity <= 0) {
@@ -150,6 +196,57 @@ export function TokenGlyphSystem({ bucketRef }: Props) {
       g.mesh.outlineOpacity = g.fillOpacity * 0.85;
     }
   });
+
+  /**
+   * Triggered once when settleSignalRef changes.
+   * Assigns ordered settle targets to main-stream glyphs based on word order in the response.
+   * Non-main-stream glyphs are faded out.
+   */
+  function triggerSettle(fullText: string) {
+    // Words in the full response (in order)
+    const words = fullText
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length >= 1 && !SKIP.test(w));
+
+    // Map word → first available glyph matching that word
+    // We process glyphs in spawn order (index 0 = oldest)
+    const wordQueue = [...words];
+    const mainGlyphs = glyphs.current.filter(
+      (g) => g.stream === 'main' || g.stream === 'voice',
+    );
+
+    // Match glyphs to words by their text (greedy, in order)
+    let settleIdx = 0;
+    for (const word of wordQueue) {
+      const match = mainGlyphs.find(
+        (g) => g.word === word && g.settleIndex === -1 && g.phase !== 'out',
+      );
+      if (match) {
+        match.phase       = 'settle';
+        match.settleIndex = settleIdx;
+        match.target      = settlePos(settleIdx);
+        // Boost font size slightly for readability in settled form
+        match.mesh.fontSize = 0.062;
+        match.mesh.color    = '#e8d8ff';
+        settleIdx++;
+      }
+    }
+
+    // Fade out any main-stream glyphs that didn't match (duplicates, punctuation remnants)
+    for (const g of mainGlyphs) {
+      if (g.settleIndex === -1 && g.phase !== 'out') {
+        g.phase = 'out';
+      }
+    }
+
+    // Fade out all association glyphs
+    for (const g of glyphs.current) {
+      if (g.stream === 'association' && g.phase !== 'out') {
+        g.phase = 'out';
+      }
+    }
+  }
 
   function spawnGlyph(group: THREE.Group, text: string, stream: StreamType, color: string) {
     if (!TroikaText) return;
@@ -198,6 +295,7 @@ export function TokenGlyphSystem({ bucketRef }: Props) {
     glyphs.current.push({
       mesh, target, velocity: vel,
       fillOpacity: 0, phase: 'in', holdTimer: 0, stream,
+      word: text, settleIndex: -1,
     });
   }
 

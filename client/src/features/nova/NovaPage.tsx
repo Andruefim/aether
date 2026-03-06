@@ -34,15 +34,23 @@ export function NovaPage() {
   const tokenBucketRef  = useRef<IncomingToken[]>([]);
   const staggerCancel   = useRef<(() => void) | null>(null);
 
+  // When set to a non-empty string, triggers the "settle" animation in TokenGlyphSystem
+  const settleSignalRef = useRef<string>('');
+
   const pushGlyphs = useCallback((text: string) => {
     staggerCancel.current?.();
     staggerCancel.current = staggerWords(text, tokenBucketRef, 'voice', '#c084fc', 65);
+    // After words are dripped in, let them orbit for a moment then settle
+    setTimeout(() => { settleSignalRef.current = text; }, 2000);
   }, []);
 
   // Text input → /api/nova/input  (3 parallel streams: main + association + tone)
   const { sendInput } = useNovaInput({
     onTone: (tone) => { console.log('[Nova] tone:', tone); },
-    onDialogue: () => { /* main stream already arrives as glyphs */ },
+    onDialogue: (text) => {
+      // Trigger settle animation once the full response is received
+      settleSignalRef.current = text;
+    },
     tokenBucketRef,
   });
 
@@ -58,6 +66,7 @@ export function NovaPage() {
 
   const handleSubmit = useCallback(async (text: string) => {
     staggerCancel.current?.();
+    settleSignalRef.current = '';
     await sendInput(text, null);
   }, [sendInput]);
 
@@ -69,7 +78,7 @@ export function NovaPage() {
         onCreated={({ gl }) => { gl.setClearColor('#05040f', 1); }}
         style={{ position: 'absolute', inset: 0 }}
       >
-        <NovaScene tokenBucketRef={tokenBucketRef} />
+        <NovaScene tokenBucketRef={tokenBucketRef} settleSignalRef={settleSignalRef} />
       </Canvas>
 
       <NovaStatusOverlay dialogueText={null} onDismiss={() => {}} />

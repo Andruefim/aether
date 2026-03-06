@@ -4,9 +4,10 @@ import { TokenGlyphSystem, type IncomingToken } from './TokenGlyphSystem';
 
 interface NovaSceneProps {
   tokenBucketRef: React.MutableRefObject<IncomingToken[]>;
+  settleSignalRef: React.MutableRefObject<string>;
 }
 
-export function NovaScene({ tokenBucketRef }: NovaSceneProps) {
+export function NovaScene({ tokenBucketRef, settleSignalRef }: NovaSceneProps) {
   return (
     <>
       <ambientLight intensity={0.15} />
@@ -17,7 +18,7 @@ export function NovaScene({ tokenBucketRef }: NovaSceneProps) {
       <NovaOrb />
 
       {/* bucketRef — живая ссылка, читается каждый RAF без ре-рендеров */}
-      <TokenGlyphSystem bucketRef={tokenBucketRef} />
+      <TokenGlyphSystem bucketRef={tokenBucketRef} settleSignalRef={settleSignalRef} />
     </>
   );
 }
