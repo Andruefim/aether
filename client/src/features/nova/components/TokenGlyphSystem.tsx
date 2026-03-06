@@ -52,14 +52,15 @@ const SETTLE_SPRING = 0.003;
 const SETTLE_DAMP   = 0.96;
 
 // Delay between consecutive association word spawns (ms)
-const ASSOC_STAGGER_MS = 220;
+const ASSOC_STAGGER_MS = 1000;
 
 // Top-right corner layout params (Three.js world units)
-const SETTLE_START_X  =  0.55;  // leftmost word column
-const SETTLE_START_Y  =  1.85;  // top row
-const SETTLE_COL_W    =  0.27;  // horizontal step between words
-const SETTLE_ROW_H    =  0.17;  // vertical step between rows
-const SETTLE_COLS     =  6;     // words per row before wrap
+const SETTLE_START_X    =  0.55;  // leftmost edge of text block (right half of screen)
+const SETTLE_START_Y    =  1.82;  // top row
+const SETTLE_CHAR_W     =  0.038; // width per character (monospace-ish estimate)
+const SETTLE_WORD_GAP   =  0.055; // extra gap between words
+const SETTLE_ROW_H      =  0.17;  // vertical step between rows
+const SETTLE_MAX_LINE_W =  1.85;  // max line width before wrap (~5-6 words per line)
 
 const FS: Record<StreamType, number> = {
   main:        0.068,
@@ -91,15 +92,31 @@ function orbitPos(i: number, total: number): THREE.Vector3 {
   return new THREE.Vector3(cx, cy, z);
 }
 
-/** Compute settled grid position for word at index `idx` in the top-right corner */
-function settlePos(idx: number): THREE.Vector3 {
-  const col = idx % SETTLE_COLS;
-  const row = Math.floor(idx / SETTLE_COLS);
-  return new THREE.Vector3(
-    SETTLE_START_X + col * SETTLE_COL_W,
-    SETTLE_START_Y - row * SETTLE_ROW_H,
-    0.05,
-  );
+/**
+ * Compute settled positions for all words at once,
+ * flowing left-to-right with proportional spacing and wrapping.
+ */
+function computeSettlePositions(words: string[]): THREE.Vector3[] {
+  const positions: THREE.Vector3[] = [];
+  let x = SETTLE_START_X;
+  let row = 0;
+
+  for (const word of words) {
+    const wordW = word.length * SETTLE_CHAR_W;
+    // Wrap to next line if word doesn't fit
+    if (x + wordW > SETTLE_START_X + SETTLE_MAX_LINE_W && x > SETTLE_START_X) {
+      x = SETTLE_START_X;
+      row++;
+    }
+    // Anchor at center of word
+    positions.push(new THREE.Vector3(
+      x + wordW / 2,
+      SETTLE_START_Y - row * SETTLE_ROW_H,
+      0.05,
+    ));
+    x += wordW + SETTLE_WORD_GAP;
+  }
+  return positions;
 }
 
 interface Props {
@@ -111,7 +128,10 @@ interface Props {
 export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
   const groupRef       = useRef<THREE.Group>(null!);
   const glyphs         = useRef<GlyphState[]>([]);
-  const wordBuf        = useRef('');
+  // Separate word buffers per stream to avoid cross-stream token bleeding
+  const wordBufMain    = useRef('');
+  const wordBufAssoc   = useRef('');
+  const wordBufVoice   = useRef('');
   const slotIdx        = useRef(0);
   const lastSettleText = useRef('');
   // Queue of association words waiting to be spawned with stagger
@@ -131,9 +151,14 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
     const bucket = bucketRef.current;
     if (bucket.length > 0) {
       for (const tok of bucket) {
-        wordBuf.current += tok.text;
-        const parts = wordBuf.current.split(/(\s+|\n)/);
-        wordBuf.current = parts.pop() ?? '';
+        // Use per-stream buffer to avoid cross-stream word bleeding
+        const bufRef =
+          tok.stream === 'association' ? wordBufAssoc :
+          tok.stream === 'main'        ? wordBufMain  :
+                                         wordBufVoice;
+        bufRef.current += tok.text;
+        const parts = bufRef.current.split(/(\s+|\n)/);
+        bufRef.current = parts.pop() ?? '';
         for (const part of parts) {
           const w = part.trim();
           if (!w || SKIP.test(w)) continue;
@@ -227,6 +252,9 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
       (g) => g.stream === 'main' || g.stream === 'voice',
     );
 
+    // Compute proportional positions for all words at once
+    const settlePositions = computeSettlePositions(wordQueue);
+
     // Match glyphs to words by their text (greedy, in order)
     // Each word starts flying with a stagger delay so they arrive one by one
     const SETTLE_STAGGER_MS = 120;
@@ -237,7 +265,7 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
       );
       if (match) {
         const idx = settleIdx;
-        const target = settlePos(idx);
+        const target = settlePositions[idx];
         // Stagger: delay each word before switching its target
         setTimeout(() => {
           match.phase       = 'settle';
