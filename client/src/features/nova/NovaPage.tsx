@@ -1,25 +1,23 @@
 import React, { useCallback, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { useVoiceAgent } from '../aether/hooks';
 import { AetherInputBar } from '../aether/components';
 import { NovaScene, NovaStatusOverlay } from './components';
-import { useNovaInput } from './hooks';
+import { useNovaInput, useNovaVoiceAgent } from './hooks';
 import { useAetherStore } from '../../core';
 import type { IncomingToken, StreamType } from './components/TokenGlyphSystem';
 
 /**
- * Drips a full string into the glyph bucket word-by-word with a delay.
- * Used for voice responses (we get the full text at once, not streamed).
- * Returns a cancel fn.
+ * Drips a full string into the glyph bucket word-by-word with stagger.
+ * Used for voice responses (full text arrives at once, not streamed).
  */
 function staggerWords(
   text: string,
   bucket: React.MutableRefObject<IncomingToken[]>,
   stream: StreamType,
   color: string,
-  intervalMs = 60,
+  intervalMs = 65,
 ): () => void {
-  const words = text.trim().split(/\s+/).filter(Boolean);
+  const words = text.trim().split(/\s+/).filter((w) => w.length >= 2);
   let i = 0;
   const id = setInterval(() => {
     if (i >= words.length) { clearInterval(id); return; }
@@ -32,43 +30,39 @@ function staggerWords(
 export function NovaPage() {
   const aetherIsGenerating = useAetherStore((s) => s.aetherIsGenerating);
 
-  // Shared mutable bucket — TokenGlyphSystem reads .current every animation frame
-  const tokenBucketRef = useRef<IncomingToken[]>([]);
-  const staggerCancelRef = useRef<(() => void) | null>(null);
+  // Shared mutable bucket — TokenGlyphSystem reads .current every RAF
+  const tokenBucketRef  = useRef<IncomingToken[]>([]);
+  const staggerCancel   = useRef<(() => void) | null>(null);
 
-  // Text input → /api/nova/input (3 parallel streams)
+  const pushGlyphs = useCallback((text: string) => {
+    staggerCancel.current?.();
+    staggerCancel.current = staggerWords(text, tokenBucketRef, 'voice', '#c084fc', 65);
+  }, []);
+
+  // Text input → /api/nova/input  (3 parallel streams: main + association + tone)
   const { sendInput } = useNovaInput({
-    onTone: (tone) => {
-      console.log('[Nova] tone:', tone); // Phase 3: → orb uniform
-    },
-    onDialogue: () => {
-      // Main response already arrives as glyphs via tokenBucketRef — no overlay needed
-    },
+    onTone: (tone) => { console.log('[Nova] tone:', tone); },
+    onDialogue: () => { /* main stream already arrives as glyphs */ },
     tokenBucketRef,
   });
 
-  // Voice agent — add onSpeak to intercept AI text before TTS
-  const { isActive: agentActive, phase: agentPhase, startAgent, stopAgent } = useVoiceAgent({
-    captureScreenshot: async () => null,
-    onUiReady: () => {},
-    onSpeak: (text: string) => {
-      // Cancel any previous stagger, start new one
-      staggerCancelRef.current?.();
-      staggerCancelRef.current = staggerWords(text, tokenBucketRef, 'voice', '#c084fc', 60);
-    },
-  });
+  // Voice agent → /api/nova/input  (no Aether HTML generation)
+  const { isActive: agentActive, phase: agentPhase, startAgent, stopAgent } =
+    useNovaVoiceAgent({
+      onSpeak: pushGlyphs,
+      onToken: (payload) => {
+        // Streamed tokens from Nova (used for associations while speaking)
+        tokenBucketRef.current.push(payload);
+      },
+    });
 
-  const handleSubmit = useCallback(
-    async (text: string) => {
-      staggerCancelRef.current?.();
-      await sendInput(text, null);
-    },
-    [sendInput],
-  );
+  const handleSubmit = useCallback(async (text: string) => {
+    staggerCancel.current?.();
+    await sendInput(text, null);
+  }, [sendInput]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#05040f]">
-      {/* Three.js canvas — full screen */}
       <Canvas
         camera={{ position: [0, 0, 4.8], fov: 55 }}
         gl={{ antialias: true, alpha: false }}
@@ -78,11 +72,7 @@ export function NovaPage() {
         <NovaScene tokenBucketRef={tokenBucketRef} />
       </Canvas>
 
-      {/* Status pill only (no dialogue bubble) */}
-      <NovaStatusOverlay
-        dialogueText={null}
-        onDismiss={() => {}}
-      />
+      <NovaStatusOverlay dialogueText={null} onDismiss={() => {}} />
 
       <AetherInputBar
         onSubmit={handleSubmit}

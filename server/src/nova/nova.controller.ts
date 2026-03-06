@@ -16,6 +16,27 @@ export class NovaController {
   @Post('input')
   @Sse()
   input(@Body() body: NovaInputDto): Observable<{ data: string }> {
+    // #region agent log
+    fetch('http://127.0.0.1:7461/ingest/64501a78-c888-413b-b13b-8cfa3e20bfa3', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Debug-Session-Id': '5c9948',
+      },
+      body: JSON.stringify({
+        sessionId: '5c9948',
+        runId: 'nova-input-426',
+        hypothesisId: 'H1-server-reached',
+        location: 'server/src/nova/nova.controller.ts:18',
+        message: 'NovaController.input called',
+        data: {
+          hasText: !!body.text,
+          textLength: body.text ? body.text.length : 0,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     if (!body.text?.trim()) {
       return new Observable((s) => {
         s.next({ data: JSON.stringify({ type: 'error', message: 'text required' }) });

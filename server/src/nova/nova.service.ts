@@ -46,11 +46,11 @@ export class NovaService {
   ) {}
 
   private get mainModel(): string {
-    return this.config.get<string>('NOVA_MAIN_MODEL', this.config.get<string>('AETHER_CODER_MODEL', 'qwen2.5-coder:7b'));
+    return this.config.get<string>('NOVA_MAIN_MODEL', 'qwen3.5:2b');
   }
 
   private get fastModel(): string {
-    return this.config.get<string>('NOVA_FAST_MODEL', this.config.get<string>('AETHER_ORCHESTRATOR_MODEL', 'gemma3:4b'));
+    return this.config.get<string>('NOVA_FAST_MODEL', 'qwen3.5:0.8b');
   }
 
   /**
@@ -74,13 +74,27 @@ export class NovaService {
           }));
 
           // ── 1. Tone analysis (fast single call, fires immediately) ─────────
-          const tonePromise = this.callTone(dto.text).then((tone) => {
-            emit({ type: 'tone', ...tone });
-          }).catch(() => {
-            emit({ type: 'tone', emotion: 'curious', energy: 0.5, color: '#a855f7' });
-          });
+          // const tonePromise = this.callTone(dto.text).then((tone) => {
+          //   emit({ type: 'tone', ...tone });
+          // }).catch(() => {
+          //   emit({ type: 'tone', emotion: 'curious', energy: 0.5, color: '#a855f7' });
+          // });
 
-          // ── 2. Main response (streaming) ──────────────────────────────────
+
+
+          // ── 2. Associations (streaming word fragments) ────────────────────
+          const assocMessages: OllamaMessage[] = [
+            { role: 'system', content: NOVA_ASSOCIATION_PROMPT },
+            { role: 'user', content: dto.text },
+          ];
+
+          const assocPromise = await (async () => {
+            for await (const token of this.ollama.streamMessages(assocMessages, this.fastModel)) {
+              emit({ type: 'token', stream: 'association', text: token, color: STREAM_COLORS.association });
+            }
+          })();
+
+          // ── 3. Main response (streaming) ──────────────────────────────────
           const mainMessages: OllamaMessage[] = [
             { role: 'system', content: NOVA_MAIN_PROMPT },
             ...history,
@@ -97,20 +111,8 @@ export class NovaService {
             }
           })();
 
-          // ── 3. Associations (streaming word fragments) ────────────────────
-          const assocMessages: OllamaMessage[] = [
-            { role: 'system', content: NOVA_ASSOCIATION_PROMPT },
-            { role: 'user', content: dto.text },
-          ];
-
-          const assocPromise = (async () => {
-            for await (const token of this.ollama.streamMessages(assocMessages, this.fastModel)) {
-              emit({ type: 'token', stream: 'association', text: token, color: STREAM_COLORS.association });
-            }
-          })();
-
           // Run all three in parallel
-          await Promise.all([tonePromise, mainPromise, assocPromise]);
+          await Promise.all([ mainPromise, assocPromise]);
 
           emit({ type: 'done' });
         } catch (err) {

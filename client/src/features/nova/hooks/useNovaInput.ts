@@ -51,6 +51,26 @@ export function useNovaInput({ onTone, onDialogue, tokenBucketRef }: UseNovaInpu
       pushAetherMessage({ role: 'user', content: text, timestamp: Date.now() });
 
       try {
+        // #region agent log
+        fetch('http://127.0.0.1:7461/ingest/64501a78-c888-413b-b13b-8cfa3e20bfa3', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Debug-Session-Id': '5c9948',
+          },
+          body: JSON.stringify({
+            sessionId: '5c9948',
+            runId: 'nova-input-426',
+            hypothesisId: 'H2-client-before-fetch',
+            location: 'client/src/features/nova/hooks/useNovaInput.ts:54',
+            message: 'Calling /api/nova/input',
+            data: {
+              url: '/api/nova/input',
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
         const res = await fetch('/api/nova/input', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -61,6 +81,28 @@ export function useNovaInput({ onTone, onDialogue, tokenBucketRef }: UseNovaInpu
             history: aetherHistory.slice(-8),
           }),
         });
+
+        // #region agent log
+        fetch('http://127.0.0.1:7461/ingest/64501a78-c888-413b-b13b-8cfa3e20bfa3', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Debug-Session-Id': '5c9948',
+          },
+          body: JSON.stringify({
+            sessionId: '5c9948',
+            runId: 'nova-input-426',
+            hypothesisId: 'H3-client-after-fetch',
+            location: 'client/src/features/nova/hooks/useNovaInput.ts:65',
+            message: 'Received response from /api/nova/input',
+            data: {
+              status: res.status,
+              ok: res.ok,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
 
         if (!res.ok || !res.body) throw new Error(`Request failed: ${res.statusText}`);
 

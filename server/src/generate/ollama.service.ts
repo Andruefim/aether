@@ -38,7 +38,7 @@ export class OllamaService {
 
   constructor(private readonly config: ConfigService) {
     this.baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
-    this.defaultModel = this.config.get<string>('OLLAMA_MODEL', 'qwen3:latest');
+    this.defaultModel = this.config.get<string>('OLLAMA_MODEL', 'qwen3.5:9b');
     this.logger.log(`Ollama: baseUrl=${this.baseUrl} defaultModel=${this.defaultModel}`);
   }
 
@@ -106,18 +106,39 @@ export class OllamaService {
   }
 
   async *streamMessages(messages: OllamaMessage[], model?: string): AsyncGenerator<string> {
+    const modelName = model ?? this.defaultModel;
+    const totalChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+    this.logger.log(`Ollama: streamMessages model=${modelName} messages=${messages.length} totalChars≈${totalChars}`);
+
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: model ?? this.defaultModel,
+        model: modelName,
         messages,
         stream: true,
         options: { temperature: 0.2 },
       }),
     });
 
-    if (!res.ok || !res.body) throw new Error(res.statusText || 'Ollama request failed');
+    if (!res.ok) {
+      const bodyText = res.body ? await res.text() : '';
+      let detail = bodyText.slice(0, 500);
+      try {
+        if (bodyText) {
+          const j = JSON.parse(bodyText) as { error?: string };
+          if (j.error) detail = j.error;
+        }
+      } catch {
+        /* use raw body */
+      }
+      this.logger.error(`Ollama streamMessages failed: ${res.status} ${res.statusText}. ${detail}`);
+      throw new Error(`Ollama request failed: ${res.status} ${res.statusText}. ${detail}`);
+    }
+    if (!res.body) {
+      this.logger.error('Ollama streamMessages: response has no body');
+      throw new Error('Ollama request failed: no response body');
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();

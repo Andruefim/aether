@@ -80,7 +80,7 @@ interface AetherStore {
 
 export const useAetherStore = create<AetherStore>((set) => ({
   // ── App mode ──────────────────────────────────────────────────────────────
-  appMode: 'desktop',
+  appMode: 'nova',
   setAppMode: (mode) => set({ appMode: mode }),
 
   // ── Desktop ───────────────────────────────────────────────────────────────
