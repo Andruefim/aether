@@ -26,10 +26,11 @@ const TYPE_COLOR: Record<string, THREE.Color> = {
 const DEFAULT_COLOR = new THREE.Color('#6b7280');
 const HIGHLIGHT_COLOR = new THREE.Color('#ffffff');
 
-const POLL_INTERVAL_MS = 8000; // re-fetch projection every 8s
-const MAX_LINE_DIST    = 1.2;  // draw edges between points closer than this
-const MAX_LINES        = 300;  // cap total line segments for perf
-const POINT_SCALE      = 4.5;  // base point size in shader
+const POLL_INTERVAL_MS = 12000; // re-fetch projection every 12s
+const MAX_LINE_DIST    = 1.0;   // draw edges between points closer than this
+const MAX_LINES        = 200;   // cap total line segments for perf
+const POINT_SCALE      = 1.8;   // base point size in shader (small stars)
+const POS_LERP_SPEED   = 0.6;   // lerp speed for smooth repositioning after poll
 
 async function fetchProject(): Promise<ConstellationPoint[]> {
   try {
@@ -46,14 +47,11 @@ export function ConstellationField({ highlightIdsRef }: Props) {
   const linesRef   = useRef<THREE.LineSegments>(null);
   const groupRef   = useRef<THREE.Group>(null);
 
-  // Live data
-  const dataRef    = useRef<ConstellationPoint[]>([]);
-  const needsRebuild = useRef(false);
-
-  // Geometry refs — rebuilt when data changes
-  const posArr   = useRef<Float32Array>(new Float32Array(0));
-  const colorArr = useRef<Float32Array>(new Float32Array(0));
-  const sizeArr  = useRef<Float32Array>(new Float32Array(0));
+  // Target data from server
+  const targetRef  = useRef<ConstellationPoint[]>([]);
+  // Current interpolated positions per id
+  const currentPos = useRef<Map<string, THREE.Vector3>>(new Map());
+  const needsInit  = useRef(false);
 
   // --- Poll projection ---
   useEffect(() => {
@@ -61,9 +59,9 @@ export function ConstellationField({ highlightIdsRef }: Props) {
     const poll = async () => {
       if (cancelled) return;
       const pts = await fetchProject();
-      if (!cancelled) {
-        dataRef.current = pts;
-        needsRebuild.current = true;
+      if (!cancelled && pts.length > 0) {
+        targetRef.current = pts;
+        needsInit.current = true;
       }
       if (!cancelled) setTimeout(poll, POLL_INTERVAL_MS);
     };
@@ -71,50 +69,42 @@ export function ConstellationField({ highlightIdsRef }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  // --- Rebuild geometry buffers when data changes ---
-  function rebuildGeometry() {
-    const pts = dataRef.current;
+  // --- Initialise geometry when new data arrives (first time or count changed) ---
+  function initGeometry(pts: ConstellationPoint[]) {
     const n   = pts.length;
-
-    const pos   = new Float32Array(n * 3);
-    const col   = new Float32Array(n * 3);
-    const sizes = new Float32Array(n);
-
+    const pos = new Float32Array(n * 3);
+    const col = new Float32Array(n * 3);
+    const siz = new Float32Array(n);
     const now = Date.now();
-    for (let i = 0; i < n; i++) {
-      const p = pts[i];
-      pos[i * 3]     = p.x;
-      pos[i * 3 + 1] = p.y;
-      pos[i * 3 + 2] = p.z;
 
-      // Age fade: 0.3 (old) → 1.0 (< 1 min)
-      const ageSec = (now - p.timestamp) / 1000;
-      const brightness = Math.max(0.3, 1 - ageSec / (60 * 30)); // fade over 30 min
+    // For new points start at target; existing ones keep current lerp pos
+    pts.forEach((p, i) => {
+      let cur = currentPos.current.get(p.id);
+      if (!cur) {
+        cur = new THREE.Vector3(p.x, p.y, p.z);
+        currentPos.current.set(p.id, cur);
+      }
+      pos[i * 3]     = cur.x;
+      pos[i * 3 + 1] = cur.y;
+      pos[i * 3 + 2] = cur.z;
 
+      const ageSec    = (now - p.timestamp) / 1000;
+      const brightness = Math.max(0.25, 1 - ageSec / (60 * 60)); // fade over 60 min
       const base = TYPE_COLOR[p.type] ?? DEFAULT_COLOR;
       col[i * 3]     = base.r * brightness;
       col[i * 3 + 1] = base.g * brightness;
       col[i * 3 + 2] = base.b * brightness;
-
-      // Size: proportional to how recent it is
-      sizes[i] = POINT_SCALE * (0.5 + 0.5 * brightness);
-    }
-
-    posArr.current   = pos;
-    colorArr.current = col;
-    sizeArr.current  = sizes;
+      siz[i] = POINT_SCALE * (0.6 + 0.4 * brightness);
+    });
 
     if (pointsRef.current) {
       const geo = pointsRef.current.geometry;
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-      geo.setAttribute('size',     new THREE.BufferAttribute(sizes, 1));
+      geo.setAttribute('aColor',   new THREE.BufferAttribute(col, 3));
+      geo.setAttribute('aSize',    new THREE.BufferAttribute(siz, 1));
       geo.setDrawRange(0, n);
       geo.computeBoundingSphere();
     }
-
-    // Rebuild line segments
-    rebuildLines(pts);
   }
 
   function rebuildLines(pts: ConstellationPoint[]) {
@@ -140,62 +130,90 @@ export function ConstellationField({ highlightIdsRef }: Props) {
     geo.computeBoundingSphere();
   }
 
-  // --- Per-frame: rebuild if dirty, animate highlight ---
+  // --- Per-frame: lerp positions toward targets, animate highlights ---
   useFrame((_, delta) => {
-    if (needsRebuild.current) {
-      needsRebuild.current = false;
-      rebuildGeometry();
+    if (needsInit.current) {
+      needsInit.current = false;
+      initGeometry(targetRef.current);
     }
 
-    if (!pointsRef.current) return;
-    const pts   = dataRef.current;
-    const ids   = highlightIdsRef.current;
-    const geo   = pointsRef.current.geometry;
-    const colBuf = geo.getAttribute('color') as THREE.BufferAttribute | undefined;
-    const sizBuf = geo.getAttribute('size')  as THREE.BufferAttribute | undefined;
-    if (!colBuf || !sizBuf) return;
+    const pts = targetRef.current;
+    if (!pointsRef.current || pts.length === 0) return;
 
-    const t = performance.now() / 1000;
-    let dirty = false;
+    const geo    = pointsRef.current.geometry;
+    const posBuf = geo.getAttribute('position') as THREE.BufferAttribute | undefined;
+    const colBuf = geo.getAttribute('aColor')   as THREE.BufferAttribute | undefined;
+    const sizBuf = geo.getAttribute('aSize')    as THREE.BufferAttribute | undefined;
+    if (!posBuf || !colBuf || !sizBuf) return;
+
+    const ids = highlightIdsRef.current;
+    const t   = performance.now() / 1000;
+    const lerpF = Math.min(1, POS_LERP_SPEED * delta);
+    let posDirty = false;
+    let colDirty = false;
+
+    const now = Date.now();
     for (let i = 0; i < pts.length; i++) {
-      const highlighted = ids.has(pts[i].id);
-      const pulse = highlighted ? 0.7 + 0.3 * Math.sin(t * 4) : 0;
+      const p   = pts[i];
+      const cur = currentPos.current.get(p.id);
+      if (!cur) continue;
 
+      // Lerp toward target
+      cur.x += (p.x - cur.x) * lerpF;
+      cur.y += (p.y - cur.y) * lerpF;
+      cur.z += (p.z - cur.z) * lerpF;
+      posBuf.setXYZ(i, cur.x, cur.y, cur.z);
+      posDirty = true;
+
+      // Highlight pulse
+      const highlighted = ids.has(p.id);
       if (highlighted) {
-        colBuf.setXYZ(i, HIGHLIGHT_COLOR.r * (0.7 + pulse * 0.3), HIGHLIGHT_COLOR.g * (0.7 + pulse * 0.3), HIGHLIGHT_COLOR.b);
-        sizBuf.setX(i, POINT_SCALE * 2.0 * (1 + pulse * 0.3));
-        dirty = true;
+        const pulse = 0.7 + 0.3 * Math.sin(t * 4);
+        colBuf.setXYZ(i, HIGHLIGHT_COLOR.r * pulse, HIGHLIGHT_COLOR.g * pulse, HIGHLIGHT_COLOR.b);
+        sizBuf.setX(i, POINT_SCALE * 2.5);
+        colDirty = true;
+      } else {
+        const ageSec    = (now - p.timestamp) / 1000;
+        const brightness = Math.max(0.25, 1 - ageSec / (60 * 60));
+        const base = TYPE_COLOR[p.type] ?? DEFAULT_COLOR;
+        colBuf.setXYZ(i, base.r * brightness, base.g * brightness, base.b * brightness);
+        sizBuf.setX(i, POINT_SCALE * (0.6 + 0.4 * brightness));
+        colDirty = true;
       }
     }
-    if (dirty) {
-      colBuf.needsUpdate = true;
-      sizBuf.needsUpdate = true;
-    }
 
-    // Slow rotation of the whole constellation
+    if (posDirty) { posBuf.needsUpdate = true; geo.computeBoundingSphere(); }
+    if (colDirty) { colBuf.needsUpdate = true; sizBuf.needsUpdate = true; }
+
+    // Rebuild lines periodically when positions settle (simple: every 120 frames)
+    if (Math.floor(t * 60) % 120 === 0) rebuildLines(pts);
+
+    // Slow rotation
     if (groupRef.current) {
-      groupRef.current.rotation.y += delta * 0.012;
+      groupRef.current.rotation.y += delta * 0.008;
     }
   });
 
   // --- Shader material for points ---
+  // Note: vertexColors must be false when using custom color/size attributes
+  // to avoid Three.js injecting a conflicting built-in `color` attribute.
   const pointMaterial = useMemo(() => new THREE.ShaderMaterial({
     uniforms: {},
     vertexShader: /* glsl */`
-      attribute float size;
-      attribute vec3 color;
-      varying vec3 vColor;
+      attribute float aSize;
+      attribute vec3  aColor;
+      varying   vec3  vColor;
       void main() {
-        vColor = color;
+        vColor = aColor;
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = size * (300.0 / -mv.z);
+        gl_PointSize = aSize * (300.0 / -mv.z);
         gl_Position  = projectionMatrix * mv;
       }
     `,
     fragmentShader: /* glsl */`
       varying vec3 vColor;
       void main() {
-        float d = length(gl_PointCoord - 0.5);
+        float d = length(gl_PointCoord - vec2(0.5));
         if (d > 0.5) discard;
         float alpha = 1.0 - smoothstep(0.3, 0.5, d);
         gl_FragColor = vec4(vColor, alpha);
@@ -204,7 +222,7 @@ export function ConstellationField({ highlightIdsRef }: Props) {
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
-    vertexColors: true,
+    vertexColors: false,
   }), []);
 
   const lineMaterial = useMemo(() => new THREE.LineBasicMaterial({
@@ -214,8 +232,6 @@ export function ConstellationField({ highlightIdsRef }: Props) {
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   }), []);
-
-  const emptyGeo = useMemo(() => new THREE.BufferGeometry(), []);
 
   return (
     <group ref={groupRef}>

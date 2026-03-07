@@ -68,7 +68,13 @@ export class NovaMemoryService implements OnModuleInit {
     const trimmed = text.trim();
     if (!trimmed) throw new Error('text is empty');
 
-    const vector = await this.embed(trimmed);
+    let vector: number[];
+    try {
+      vector = await this.embed(trimmed);
+    } catch (err) {
+      this.logger.warn(`embed skipped (model unavailable?): ${err instanceof Error ? err.message : String(err)}`);
+      return 'skipped';
+    }
     const id = crypto.randomUUID();
 
     await this.client.upsert(COLLECTION, {
@@ -116,7 +122,13 @@ export class NovaMemoryService implements OnModuleInit {
       // UMAP needs ≥ 4 points; just place them linearly
       coords = vectors.map((_, i) => [i * 0.5, 0, 0]);
     } else {
-      const umap = new UMAP({ nComponents: 3, nNeighbors: Math.min(15, vectors.length - 1), minDist: 0.1 });
+      const umap = new UMAP({
+        nComponents: 3,
+        nNeighbors: Math.min(15, vectors.length - 1),
+        minDist: 0.1,
+        // Fixed seed so projections are stable across polls
+        random: (() => { let s = 42; return () => { s = (s * 1664525 + 1013904223) & 0xffffffff; return (s >>> 0) / 0xffffffff; }; })(),
+      });
       coords = await umap.fitAsync(vectors);
     }
 
