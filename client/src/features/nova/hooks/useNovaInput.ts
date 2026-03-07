@@ -167,15 +167,13 @@ export function useNovaInput({ onTone, onDialogue, tokenBucketRef }: UseNovaInpu
                   isDone = true;
                   if (mainBufferRef.current.trim()) {
                     const fullText = mainBufferRef.current.trim();
-                    // Push a trailing space token so TokenGlyphSystem flushes
-                    // any partial word still sitting in wordBufMain
+                    // Flush partial last word in TokenGlyphSystem wordBufMain
                     tokenBucketRef.current.push({
                       text: ' ',
                       stream: 'main',
                       color: '#c084fc',
                     });
-                    // Delay settle signal to give TokenGlyphSystem time to
-                    // spawn the last flushed word before matching
+                    // Delay settle signal so last glyph has time to spawn
                     setTimeout(() => {
                       onDialogue?.(fullText);
                     }, 150);
@@ -184,6 +182,21 @@ export function useNovaInput({ onTone, onDialogue, tokenBucketRef }: UseNovaInpu
                       content: fullText,
                       timestamp: Date.now(),
                     });
+                    // Persist to Qdrant memory (fire-and-forget)
+                    fetch('/api/nova/memory', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ text: fullText, type: 'main' }),
+                    }).catch(() => {});
+                    // Also save the user prompt
+                    const userText = aetherHistory[aetherHistory.length - 1]?.content;
+                    if (userText) {
+                      fetch('/api/nova/memory', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: userText, type: 'main' }),
+                      }).catch(() => {});
+                    }
                   }
                   break;
 

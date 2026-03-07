@@ -27,6 +27,17 @@ function staggerWords(
   return () => clearInterval(id);
 }
 
+async function fetchHighlightIds(query: string): Promise<Set<string>> {
+  try {
+    const res = await fetch(`/api/nova/memory/search?q=${encodeURIComponent(query)}&k=12`);
+    if (!res.ok) return new Set();
+    const pts = (await res.json()) as { id: string }[];
+    return new Set(pts.map((p) => p.id));
+  } catch {
+    return new Set();
+  }
+}
+
 export function NovaPage() {
   const aetherIsGenerating = useAetherStore((s) => s.aetherIsGenerating);
 
@@ -36,6 +47,9 @@ export function NovaPage() {
 
   // When set to a non-empty string, triggers the "settle" animation in TokenGlyphSystem
   const settleSignalRef = useRef<string>('');
+
+  // IDs of memory points to highlight (nearest neighbors of current query)
+  const highlightIdsRef = useRef<Set<string>>(new Set());
 
   const pushGlyphs = useCallback((text: string) => {
     staggerCancel.current?.();
@@ -67,6 +81,8 @@ export function NovaPage() {
   const handleSubmit = useCallback(async (text: string) => {
     staggerCancel.current?.();
     settleSignalRef.current = '';
+    // Highlight nearest memories for this query (fire-and-forget)
+    fetchHighlightIds(text).then((ids) => { highlightIdsRef.current = ids; }).catch(() => {});
     await sendInput(text, null);
   }, [sendInput]);
 
@@ -78,7 +94,7 @@ export function NovaPage() {
         onCreated={({ gl }) => { gl.setClearColor('#05040f', 1); }}
         style={{ position: 'absolute', inset: 0 }}
       >
-        <NovaScene tokenBucketRef={tokenBucketRef} settleSignalRef={settleSignalRef} />
+        <NovaScene tokenBucketRef={tokenBucketRef} settleSignalRef={settleSignalRef} highlightIdsRef={highlightIdsRef} />
       </Canvas>
 
       <NovaStatusOverlay dialogueText={null} onDismiss={() => {}} />
