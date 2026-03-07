@@ -153,6 +153,30 @@ export class NovaMemoryService implements OnModuleInit {
     }));
   }
 
+  // ── Recall: text snippets for context injection ──────────────────────────
+
+  async recall(query: string, topK = 5): Promise<string[]> {
+    let vector: number[];
+    try {
+      vector = await this.embed(query);
+    } catch {
+      return [];
+    }
+    try {
+      const results = await this.client.search(COLLECTION, {
+        vector,
+        limit: topK,
+        with_payload: true,
+        score_threshold: 0.5,
+      });
+      return results
+        .map((r) => String((r.payload as Record<string, unknown> | null | undefined)?.['text'] ?? ''))
+        .filter((t) => t.length > 0);
+    } catch {
+      return [];
+    }
+  }
+
   // ── Nearest neighbors (for query highlight) ─────────────────────────────
 
   async search(query: string, topK = 10): Promise<MemoryPoint[]> {

@@ -1,7 +1,8 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { AetherInputBar } from '../aether/components';
 import { NovaScene, NovaStatusOverlay } from './components';
+import { ConstellationTooltip, type TooltipState } from './components/ConstellationField';
 import { useNovaInput, useNovaVoiceAgent } from './hooks';
 import { useAetherStore } from '../../core';
 import type { IncomingToken, StreamType } from './components/TokenGlyphSystem';
@@ -44,6 +45,8 @@ export function NovaPage() {
   // Shared mutable bucket — TokenGlyphSystem reads .current every RAF
   const tokenBucketRef  = useRef<IncomingToken[]>([]);
   const staggerCancel   = useRef<(() => void) | null>(null);
+
+  const [tooltip, setTooltip] = useState<TooltipState>({ text: '', x: 0, y: 0, visible: false });
 
   // When set to a non-empty string, triggers the "settle" animation in TokenGlyphSystem
   const settleSignalRef = useRef<string>('');
@@ -94,10 +97,11 @@ export function NovaPage() {
         onCreated={({ gl }) => { gl.setClearColor('#05040f', 1); }}
         style={{ position: 'absolute', inset: 0 }}
       >
-        <NovaScene tokenBucketRef={tokenBucketRef} settleSignalRef={settleSignalRef} highlightIdsRef={highlightIdsRef} />
+        <NovaScene tokenBucketRef={tokenBucketRef} settleSignalRef={settleSignalRef} highlightIdsRef={highlightIdsRef} onTooltip={setTooltip} />
       </Canvas>
 
       <NovaStatusOverlay dialogueText={null} onDismiss={() => {}} />
+      <ConstellationTooltip state={tooltip} />
 
       <AetherInputBar
         onSubmit={handleSubmit}

@@ -1,5 +1,5 @@
-import { useRef, useEffect, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useRef, useEffect, useMemo, useCallback } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
 export interface ConstellationPoint {
@@ -12,25 +12,57 @@ export interface ConstellationPoint {
   z: number;
 }
 
+export interface TooltipState { text: string; x: number; y: number; visible: boolean }
+
 interface Props {
-  /** Ref to array of highlighted point IDs (nearest neighbors of current query) */
   highlightIdsRef: React.MutableRefObject<Set<string>>;
+  onTooltip: (state: TooltipState) => void;
 }
 
-// Color per memory type
+// ── Tooltip (HTML overlay, rendered in NovaPage) ──────────────────────────
+export function ConstellationTooltip({ state }: { state: TooltipState }) {
+  if (!state.visible) return null;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        left: state.x + 14,
+        top:  state.y - 10,
+        maxWidth: 260,
+        padding: '6px 10px',
+        background: 'rgba(15,10,30,0.88)',
+        border: '1px solid rgba(168,85,247,0.4)',
+        borderRadius: 8,
+        color: '#e2d9f3',
+        fontSize: 12,
+        lineHeight: 1.5,
+        pointerEvents: 'none',
+        zIndex: 1000,
+        backdropFilter: 'blur(6px)',
+        boxShadow: '0 4px 20px rgba(168,85,247,0.2)',
+      }}
+    >
+      {state.text}
+    </div>
+  );
+}
+
 const TYPE_COLOR: Record<string, THREE.Color> = {
   main:        new THREE.Color('#a855f7'),
   association: new THREE.Color('#60a5fa'),
   voice:       new THREE.Color('#fbbf24'),
 };
-const DEFAULT_COLOR = new THREE.Color('#6b7280');
-const HIGHLIGHT_COLOR = new THREE.Color('#ffffff');
+const DEFAULT_COLOR   = new THREE.Color('#6b7280');
+const HIGHLIGHT_COLOR = new THREE.Color('#c4b5fd');
 
-const POLL_INTERVAL_MS = 12000; // re-fetch projection every 12s
-const MAX_LINE_DIST    = 1.0;   // draw edges between points closer than this
-const MAX_LINES        = 200;   // cap total line segments for perf
-const POINT_SCALE      = 1.8;   // base point size in shader (small stars)
-const POS_LERP_SPEED   = 0.6;   // lerp speed for smooth repositioning after poll
+const POLL_INTERVAL_MS = 12000;
+const MAX_LINE_DIST    = 1.0;
+const MAX_LINES        = 200;
+const POINT_SCALE      = 1.6;   // base size — small stars
+const POINT_SCALE_HI   = 2.2;   // highlighted size (was 2.5*1.8=4.5, now small)
+const POS_LERP_SPEED   = 0.6;
+// Divisor in gl_PointSize — lower = smaller points at same distance
+const SIZE_DIVISOR     = 180.0;
 
 async function fetchProject(): Promise<ConstellationPoint[]> {
   try {
@@ -42,18 +74,63 @@ async function fetchProject(): Promise<ConstellationPoint[]> {
   }
 }
 
-export function ConstellationField({ highlightIdsRef }: Props) {
-  const pointsRef  = useRef<THREE.Points>(null);
-  const linesRef   = useRef<THREE.LineSegments>(null);
-  const groupRef   = useRef<THREE.Group>(null);
+// ── Glow sprite texture (radial gradient baked into canvas) ────────────────
+function makeGlowTexture(size = 64): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0,   'rgba(180,130,255,0.85)');
+  grad.addColorStop(0.4, 'rgba(120,80,200,0.30)');
+  grad.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  return new THREE.CanvasTexture(canvas);
+}
 
-  // Target data from server
+// ── Tooltip (HTML overlay, lives outside Canvas) ──────────────────────────
+function Tooltip({ state }: { state: TooltipState }) {
+  if (!state.visible) return null;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        left: state.x + 14,
+        top:  state.y - 10,
+        maxWidth: 260,
+        padding: '6px 10px',
+        background: 'rgba(15,10,30,0.88)',
+        border: '1px solid rgba(168,85,247,0.4)',
+        borderRadius: 8,
+        color: '#e2d9f3',
+        fontSize: 12,
+        lineHeight: 1.5,
+        pointerEvents: 'none',
+        zIndex: 1000,
+        backdropFilter: 'blur(6px)',
+        boxShadow: '0 4px 20px rgba(168,85,247,0.2)',
+      }}
+    >
+      {state.text}
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────
+export function ConstellationField({ highlightIdsRef, onTooltip }: Props) {
+  const pointsRef = useRef<THREE.Points>(null);
+  const linesRef  = useRef<THREE.LineSegments>(null);
+  const groupRef  = useRef<THREE.Group>(null);
+
   const targetRef  = useRef<ConstellationPoint[]>([]);
-  // Current interpolated positions per id
   const currentPos = useRef<Map<string, THREE.Vector3>>(new Map());
   const needsInit  = useRef(false);
 
-  // --- Poll projection ---
+  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { camera, gl } = useThree();
+
+  // ── Poll projection ──────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
@@ -69,7 +146,7 @@ export function ConstellationField({ highlightIdsRef }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  // --- Initialise geometry when new data arrives (first time or count changed) ---
+  // ── Init geometry ────────────────────────────────────────────────────────
   function initGeometry(pts: ConstellationPoint[]) {
     const n   = pts.length;
     const pos = new Float32Array(n * 3);
@@ -77,19 +154,15 @@ export function ConstellationField({ highlightIdsRef }: Props) {
     const siz = new Float32Array(n);
     const now = Date.now();
 
-    // For new points start at target; existing ones keep current lerp pos
     pts.forEach((p, i) => {
       let cur = currentPos.current.get(p.id);
-      if (!cur) {
-        cur = new THREE.Vector3(p.x, p.y, p.z);
-        currentPos.current.set(p.id, cur);
-      }
+      if (!cur) { cur = new THREE.Vector3(p.x, p.y, p.z); currentPos.current.set(p.id, cur); }
       pos[i * 3]     = cur.x;
       pos[i * 3 + 1] = cur.y;
       pos[i * 3 + 2] = cur.z;
 
       const ageSec    = (now - p.timestamp) / 1000;
-      const brightness = Math.max(0.25, 1 - ageSec / (60 * 60)); // fade over 60 min
+      const brightness = Math.max(0.25, 1 - ageSec / 3600);
       const base = TYPE_COLOR[p.type] ?? DEFAULT_COLOR;
       col[i * 3]     = base.r * brightness;
       col[i * 3 + 1] = base.g * brightness;
@@ -105,32 +178,120 @@ export function ConstellationField({ highlightIdsRef }: Props) {
       geo.setDrawRange(0, n);
       geo.computeBoundingSphere();
     }
+    rebuildLines(pts);
+    rebuildGlow(pts);
   }
 
+  // ── Line segments between nearby points ──────────────────────────────────
   function rebuildLines(pts: ConstellationPoint[]) {
     if (!linesRef.current) return;
-    const lineVerts: number[] = [];
-
-    for (let i = 0; i < pts.length && lineVerts.length / 6 < MAX_LINES; i++) {
-      for (let j = i + 1; j < pts.length && lineVerts.length / 6 < MAX_LINES; j++) {
+    const verts: number[] = [];
+    for (let i = 0; i < pts.length && verts.length / 6 < MAX_LINES; i++) {
+      for (let j = i + 1; j < pts.length && verts.length / 6 < MAX_LINES; j++) {
         const dx = pts[i].x - pts[j].x;
         const dy = pts[i].y - pts[j].y;
         const dz = pts[i].z - pts[j].z;
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist < MAX_LINE_DIST) {
-          lineVerts.push(pts[i].x, pts[i].y, pts[i].z);
-          lineVerts.push(pts[j].x, pts[j].y, pts[j].z);
+        if (Math.sqrt(dx * dx + dy * dy + dz * dz) < MAX_LINE_DIST) {
+          verts.push(pts[i].x, pts[i].y, pts[i].z, pts[j].x, pts[j].y, pts[j].z);
         }
       }
     }
-
     const geo = linesRef.current.geometry;
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(lineVerts), 3));
-    geo.setDrawRange(0, lineVerts.length / 3);
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+    geo.setDrawRange(0, verts.length / 3);
     geo.computeBoundingSphere();
   }
 
-  // --- Per-frame: lerp positions toward targets, animate highlights ---
+  // ── Nebula / glow sprites ────────────────────────────────────────────────
+  // We compute cluster centroids and place a large additive sprite at each.
+  const glowGroupRef = useRef<THREE.Group>(null);
+  const glowTexture  = useMemo(() => makeGlowTexture(128), []);
+
+  function rebuildGlow(pts: ConstellationPoint[]) {
+    const grp = glowGroupRef.current;
+    if (!grp) return;
+
+    // Remove old sprites
+    while (grp.children.length) grp.remove(grp.children[0]);
+
+    if (pts.length < 3) return;
+
+    // Simple clustering: group points within radius 0.8 of each other
+    const visited = new Set<number>();
+    const clusters: ConstellationPoint[][] = [];
+    for (let i = 0; i < pts.length; i++) {
+      if (visited.has(i)) continue;
+      const cluster = [pts[i]];
+      visited.add(i);
+      for (let j = i + 1; j < pts.length; j++) {
+        if (visited.has(j)) continue;
+        const dx = pts[i].x - pts[j].x;
+        const dy = pts[i].y - pts[j].y;
+        const dz = pts[i].z - pts[j].z;
+        if (Math.sqrt(dx * dx + dy * dy + dz * dz) < 0.8) {
+          cluster.push(pts[j]);
+          visited.add(j);
+        }
+      }
+      if (cluster.length >= 2) clusters.push(cluster);
+    }
+
+    for (const cluster of clusters) {
+      const cx = cluster.reduce((s, p) => s + p.x, 0) / cluster.length;
+      const cy = cluster.reduce((s, p) => s + p.y, 0) / cluster.length;
+      const cz = cluster.reduce((s, p) => s + p.z, 0) / cluster.length;
+
+      const radius = Math.max(0.4, Math.sqrt(cluster.length) * 0.25);
+      const mat = new THREE.SpriteMaterial({
+        map: glowTexture,
+        transparent: true,
+        opacity: Math.min(0.55, 0.2 + cluster.length * 0.04),
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.set(cx, cy, cz);
+      sprite.scale.setScalar(radius * 2.8);
+      grp.add(sprite);
+    }
+  }
+
+  // ── Raycasting for tooltip ───────────────────────────────────────────────
+  const raycaster  = useMemo(() => new THREE.Raycaster(), []);
+  raycaster.params.Points = { threshold: 0.12 };
+
+  const handlePointerMove = useCallback((e: MouseEvent) => {
+    const pts = targetRef.current;
+    if (!pts.length || !pointsRef.current) return;
+
+    const rect   = gl.domElement.getBoundingClientRect();
+    const ndc    = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width)  *  2 - 1,
+      ((e.clientY - rect.top)  / rect.height) * -2 + 1,
+    );
+    raycaster.setFromCamera(ndc, camera);
+
+    const hits = raycaster.intersectObject(pointsRef.current);
+    if (tooltipTimerRef.current) { clearTimeout(tooltipTimerRef.current); tooltipTimerRef.current = null; }
+
+    if (hits.length > 0) {
+      const idx = hits[0].index ?? 0;
+      const pt  = pts[idx];
+      if (pt) {
+        onTooltip({ text: pt.text, x: e.clientX, y: e.clientY, visible: true });
+      }
+    } else {
+      tooltipTimerRef.current = setTimeout(() => onTooltip({ text: '', x: 0, y: 0, visible: false }), 200);
+    }
+  }, [camera, gl, raycaster]);
+
+  useEffect(() => {
+    const el = gl.domElement;
+    el.addEventListener('mousemove', handlePointerMove);
+    return () => el.removeEventListener('mousemove', handlePointerMove);
+  }, [gl, handlePointerMove]);
+
+  // ── Per-frame update ─────────────────────────────────────────────────────
   useFrame((_, delta) => {
     if (needsInit.current) {
       needsInit.current = false;
@@ -146,57 +307,45 @@ export function ConstellationField({ highlightIdsRef }: Props) {
     const sizBuf = geo.getAttribute('aSize')    as THREE.BufferAttribute | undefined;
     if (!posBuf || !colBuf || !sizBuf) return;
 
-    const ids = highlightIdsRef.current;
-    const t   = performance.now() / 1000;
+    const ids   = highlightIdsRef.current;
+    const t     = performance.now() / 1000;
     const lerpF = Math.min(1, POS_LERP_SPEED * delta);
-    let posDirty = false;
-    let colDirty = false;
+    const now   = Date.now();
 
-    const now = Date.now();
     for (let i = 0; i < pts.length; i++) {
       const p   = pts[i];
       const cur = currentPos.current.get(p.id);
       if (!cur) continue;
 
-      // Lerp toward target
       cur.x += (p.x - cur.x) * lerpF;
       cur.y += (p.y - cur.y) * lerpF;
       cur.z += (p.z - cur.z) * lerpF;
       posBuf.setXYZ(i, cur.x, cur.y, cur.z);
-      posDirty = true;
 
-      // Highlight pulse
-      const highlighted = ids.has(p.id);
-      if (highlighted) {
-        const pulse = 0.7 + 0.3 * Math.sin(t * 4);
-        colBuf.setXYZ(i, HIGHLIGHT_COLOR.r * pulse, HIGHLIGHT_COLOR.g * pulse, HIGHLIGHT_COLOR.b);
-        sizBuf.setX(i, POINT_SCALE * 2.5);
-        colDirty = true;
+      if (ids.has(p.id)) {
+        const pulse = 0.75 + 0.25 * Math.sin(t * 4);
+        colBuf.setXYZ(i, HIGHLIGHT_COLOR.r * pulse, HIGHLIGHT_COLOR.g * pulse, HIGHLIGHT_COLOR.b * pulse);
+        sizBuf.setX(i, POINT_SCALE_HI);
       } else {
         const ageSec    = (now - p.timestamp) / 1000;
-        const brightness = Math.max(0.25, 1 - ageSec / (60 * 60));
+        const brightness = Math.max(0.25, 1 - ageSec / 3600);
         const base = TYPE_COLOR[p.type] ?? DEFAULT_COLOR;
         colBuf.setXYZ(i, base.r * brightness, base.g * brightness, base.b * brightness);
         sizBuf.setX(i, POINT_SCALE * (0.6 + 0.4 * brightness));
-        colDirty = true;
       }
     }
 
-    if (posDirty) { posBuf.needsUpdate = true; geo.computeBoundingSphere(); }
-    if (colDirty) { colBuf.needsUpdate = true; sizBuf.needsUpdate = true; }
+    posBuf.needsUpdate = true;
+    colBuf.needsUpdate = true;
+    sizBuf.needsUpdate = true;
+    geo.computeBoundingSphere();
 
-    // Rebuild lines periodically when positions settle (simple: every 120 frames)
     if (Math.floor(t * 60) % 120 === 0) rebuildLines(pts);
 
-    // Slow rotation
-    if (groupRef.current) {
-      groupRef.current.rotation.y += delta * 0.008;
-    }
+    if (groupRef.current) groupRef.current.rotation.y += delta * 0.008;
   });
 
-  // --- Shader material for points ---
-  // Note: vertexColors must be false when using custom color/size attributes
-  // to avoid Three.js injecting a conflicting built-in `color` attribute.
+  // ── Materials ─────────────────────────────────────────────────────────────
   const pointMaterial = useMemo(() => new THREE.ShaderMaterial({
     uniforms: {},
     vertexShader: /* glsl */`
@@ -206,7 +355,7 @@ export function ConstellationField({ highlightIdsRef }: Props) {
       void main() {
         vColor = aColor;
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = aSize * (300.0 / -mv.z);
+        gl_PointSize = aSize * (${SIZE_DIVISOR.toFixed(1)} / -mv.z);
         gl_Position  = projectionMatrix * mv;
       }
     `,
@@ -215,8 +364,11 @@ export function ConstellationField({ highlightIdsRef }: Props) {
       void main() {
         float d = length(gl_PointCoord - vec2(0.5));
         if (d > 0.5) discard;
-        float alpha = 1.0 - smoothstep(0.3, 0.5, d);
-        gl_FragColor = vec4(vColor, alpha);
+        // Soft glow: bright core + halo
+        float core  = 1.0 - smoothstep(0.0, 0.22, d);
+        float halo  = 1.0 - smoothstep(0.22, 0.50, d);
+        float alpha = core * 0.95 + halo * 0.35;
+        gl_FragColor = vec4(vColor + core * 0.4, alpha);
       }
     `,
     transparent: true,
@@ -226,18 +378,24 @@ export function ConstellationField({ highlightIdsRef }: Props) {
   }), []);
 
   const lineMaterial = useMemo(() => new THREE.LineBasicMaterial({
-    color: 0x4c2d7a,
+    color: 0x6d28d9,
     transparent: true,
-    opacity: 0.18,
+    opacity: 0.14,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   }), []);
 
   return (
     <group ref={groupRef}>
+      {/* Nebula glow sprites */}
+      <group ref={glowGroupRef} />
+
+      {/* Star points */}
       <points ref={pointsRef} material={pointMaterial} renderOrder={0}>
         <bufferGeometry />
       </points>
+
+      {/* Constellation lines */}
       <lineSegments ref={linesRef} material={lineMaterial} renderOrder={0}>
         <bufferGeometry />
       </lineSegments>

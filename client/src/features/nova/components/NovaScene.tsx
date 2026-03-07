@@ -1,15 +1,16 @@
 import React from 'react';
 import { NovaOrb } from './NovaOrb';
 import { TokenGlyphSystem, type IncomingToken } from './TokenGlyphSystem';
-import { ConstellationField } from './ConstellationField';
+import { ConstellationField, type TooltipState } from './ConstellationField';
 
 interface NovaSceneProps {
   tokenBucketRef: React.MutableRefObject<IncomingToken[]>;
   settleSignalRef: React.MutableRefObject<string>;
   highlightIdsRef: React.MutableRefObject<Set<string>>;
+  onTooltip: (state: TooltipState) => void;
 }
 
-export function NovaScene({ tokenBucketRef, settleSignalRef, highlightIdsRef }: NovaSceneProps) {
+export function NovaScene({ tokenBucketRef, settleSignalRef, highlightIdsRef, onTooltip }: NovaSceneProps) {
   return (
     <>
       <ambientLight intensity={0.15} />
@@ -18,7 +19,7 @@ export function NovaScene({ tokenBucketRef, settleSignalRef, highlightIdsRef }: 
       <pointLight position={[ 0,  0,-5]} intensity={0.4} color="#4080ff" />
 
       {/* Memory constellation — renders behind everything */}
-      <ConstellationField highlightIdsRef={highlightIdsRef} />
+      <ConstellationField highlightIdsRef={highlightIdsRef} onTooltip={onTooltip} />
 
       <NovaOrb />
 

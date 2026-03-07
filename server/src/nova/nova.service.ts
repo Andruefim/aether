@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Observable } from 'rxjs';
 import { OllamaService, OllamaMessage } from '../generate/ollama.service';
+import { NovaMemoryService } from './nova-memory.service';
 
 export interface NovaInputDto {
   text: string;
@@ -43,6 +44,7 @@ export class NovaService {
   constructor(
     private readonly config: ConfigService,
     private readonly ollama: OllamaService,
+    private readonly memory: NovaMemoryService,
   ) {}
 
   private get mainModel(): string {
@@ -82,6 +84,12 @@ export class NovaService {
 
 
 
+          // ── 0. Recall relevant memories ───────────────────────────────────
+          const memories = await this.memory.recall(dto.text, 5);
+          const memoryContext = memories.length > 0
+            ? `\n\nRelevant memories from past conversations:\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}`
+            : '';
+
           // ── 2. Associations (streaming word fragments) ────────────────────
           const assocMessages: OllamaMessage[] = [
             { role: 'system', content: NOVA_ASSOCIATION_PROMPT },
@@ -96,7 +104,7 @@ export class NovaService {
 
           // ── 3. Main response (streaming) ──────────────────────────────────
           const mainMessages: OllamaMessage[] = [
-            { role: 'system', content: NOVA_MAIN_PROMPT },
+            { role: 'system', content: NOVA_MAIN_PROMPT + memoryContext },
             ...history,
             {
               role: 'user',
