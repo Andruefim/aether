@@ -66,7 +66,7 @@ export function AetherInputBar({
   return (
     <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 w-full max-w-2xl px-4">
       <motion.form
-        initial={{ y: 50, opacity: 0 }}
+        initial={{ y: 0, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
         onSubmit={handleSubmit}

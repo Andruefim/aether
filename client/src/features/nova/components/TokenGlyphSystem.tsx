@@ -52,7 +52,7 @@ const SETTLE_SPRING = 0.003;
 const SETTLE_DAMP   = 0.96;
 
 // Delay between consecutive association word spawns (ms)
-const ASSOC_STAGGER_MS = 1000;
+const ASSOC_STAGGER_MS = 100;
 
 // Top-right corner layout params (Three.js world units)
 const SETTLE_START_X    =  0.55;  // leftmost edge of text block (right half of screen)
@@ -179,6 +179,12 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
     if (sig && sig !== lastSettleText.current) {
       lastSettleText.current = sig;
       triggerSettle(sig);
+    } else if (!sig && lastSettleText.current) {
+      // Signal was reset (new request) — fade out all settled glyphs
+      lastSettleText.current = '';
+      for (const g of glyphs.current) {
+        if (g.phase === 'settle') g.phase = 'out';
+      }
     }
 
     // ── Physics + fade ────────────────────────────────────────────────────────
@@ -241,48 +247,41 @@ export function TokenGlyphSystem({ bucketRef, settleSignalRef }: Props) {
    * Non-main-stream glyphs are faded out.
    */
   function triggerSettle(fullText: string) {
-    // Words in the full response (in order)
+    // Words in the full response (in order), strip pure-punctuation entries
     const words = fullText
       .trim()
       .split(/\s+/)
-      .filter((w) => w.length >= 1 && !SKIP.test(w));
+      .filter((w) => w.replace(/[.,;:!?—–\-]/g, '').length >= 1);
 
-    const wordQueue = [...words];
+    // Main-stream glyphs in spawn order (oldest = lowest index = earliest word)
     const mainGlyphs = glyphs.current.filter(
-      (g) => g.stream === 'main' || g.stream === 'voice',
+      (g) => (g.stream === 'main' || g.stream === 'voice') && g.phase !== 'out',
     );
 
     // Compute proportional positions for all words at once
-    const settlePositions = computeSettlePositions(wordQueue);
+    const settlePositions = computeSettlePositions(words);
 
-    // Match glyphs to words by their text (greedy, in order)
-    // Each word starts flying with a stagger delay so they arrive one by one
+    // Match by spawn order — pair i-th unmatched glyph with i-th word.
+    // Avoids wrong matches when the same word appears multiple times.
     const SETTLE_STAGGER_MS = 120;
-    let settleIdx = 0;
-    for (const word of wordQueue) {
-      const match = mainGlyphs.find(
-        (g) => g.word === word && g.settleIndex === -1 && g.phase !== 'out',
-      );
-      if (match) {
-        const idx = settleIdx;
-        const target = settlePositions[idx];
-        // Stagger: delay each word before switching its target
-        setTimeout(() => {
-          match.phase       = 'settle';
-          match.settleIndex = idx;
-          match.target      = target;
-          match.mesh.fontSize = 0.062;
-          match.mesh.color    = '#e8d8ff';
-        }, idx * SETTLE_STAGGER_MS);
-        settleIdx++;
-      }
+    const unmatched = mainGlyphs.filter((g) => g.settleIndex === -1);
+    const count = Math.min(unmatched.length, words.length);
+
+    for (let i = 0; i < count; i++) {
+      const g      = unmatched[i];
+      const target = settlePositions[i];
+      setTimeout(() => {
+        g.phase       = 'settle';
+        g.settleIndex = i;
+        g.target      = target;
+        g.mesh.fontSize = 0.062;
+        // keep original stream color, no override
+      }, i * SETTLE_STAGGER_MS);
     }
 
-    // Fade out any main-stream glyphs that didn't match (duplicates, punctuation remnants)
-    for (const g of mainGlyphs) {
-      if (g.settleIndex === -1 && g.phase !== 'out') {
-        g.phase = 'out';
-      }
+    // Fade out surplus glyphs that have no settle slot
+    for (let i = count; i < unmatched.length; i++) {
+      unmatched[i].phase = 'out';
     }
 
     // Fade out all association glyphs

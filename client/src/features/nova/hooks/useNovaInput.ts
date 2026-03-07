@@ -167,7 +167,18 @@ export function useNovaInput({ onTone, onDialogue, tokenBucketRef }: UseNovaInpu
                   isDone = true;
                   if (mainBufferRef.current.trim()) {
                     const fullText = mainBufferRef.current.trim();
-                    onDialogue?.(fullText);
+                    // Push a trailing space token so TokenGlyphSystem flushes
+                    // any partial word still sitting in wordBufMain
+                    tokenBucketRef.current.push({
+                      text: ' ',
+                      stream: 'main',
+                      color: '#c084fc',
+                    });
+                    // Delay settle signal to give TokenGlyphSystem time to
+                    // spawn the last flushed word before matching
+                    setTimeout(() => {
+                      onDialogue?.(fullText);
+                    }, 150);
                     pushAetherMessage({
                       role: 'assistant',
                       content: fullText,
