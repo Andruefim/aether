@@ -74,7 +74,7 @@ export class NovaService {
           }));
 
           // ── 1. Tone analysis (fast single call, fires immediately) ─────────
-          // const tonePromise = this.callTone(dto.text).then((tone) => {
+          // const tonePromise = await this.callTone(dto.text).then((tone) => {
           //   emit({ type: 'tone', ...tone });
           // }).catch(() => {
           //   emit({ type: 'tone', emotion: 'curious', energy: 0.5, color: '#a855f7' });

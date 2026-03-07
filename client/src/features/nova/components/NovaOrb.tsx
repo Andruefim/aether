@@ -10,6 +10,11 @@ import {
   HALO_FRAGMENT,
 } from '../shaders/orbShaders';
 
+// Spring physics for birth animation
+// stiffness / damping tuned for a gentle overshoot
+const BIRTH_STIFFNESS = 2.8;
+const BIRTH_DAMPING   = 0.55;  // < 1 → underdamped → overshoot effect
+
 /**
  * NovaOrb — the central reactive orb.
  *
@@ -22,6 +27,11 @@ export function NovaOrb() {
   const orbRef = useRef<THREE.Mesh>(null);
   const orbMatRef = useRef<THREE.ShaderMaterial>(null);
   const haloMatRef = useRef<THREE.ShaderMaterial>(null);
+
+  // Birth animation state — spring from 0 → 1
+  const birthScale    = useRef(0);
+  const birthVelocity = useRef(0);
+  const birthDone     = useRef(false);
 
   const isGenerating = useAetherStore((s) => s.aetherIsGenerating);
   const isListening  = useAetherStore((s) => s.aetherIsListening);
@@ -50,7 +60,7 @@ export function NovaOrb() {
     [],
   );
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
 
     // ── lerp targets ──────────────────────────────────────────────────────
@@ -82,13 +92,26 @@ export function NovaOrb() {
       u.uSpeakingProgress.value  = THREE.MathUtils.lerp(u.uSpeakingProgress.value,  targetSpeaking, LERP_SLOW);
     }
 
+    // Birth spring: 0 → 1 with gentle overshoot
+    if (!birthDone.current) {
+      const force = BIRTH_STIFFNESS * (1 - birthScale.current);
+      birthVelocity.current += force * delta;
+      birthVelocity.current *= Math.pow(BIRTH_DAMPING, delta * 60);
+      birthScale.current    += birthVelocity.current * delta;
+      // Consider animation done when settled close enough to 1
+      if (Math.abs(birthScale.current - 1) < 0.001 && Math.abs(birthVelocity.current) < 0.001) {
+        birthScale.current = 1;
+        birthDone.current  = true;
+      }
+    }
+
     // Slow idle rotation + breathing scale
     if (orbRef.current) {
       orbRef.current.rotation.y = t * 0.07;
       orbRef.current.rotation.x = Math.sin(t * 0.11) * 0.06;
       const breathe = 1 + Math.sin(t * 0.75) * 0.022;
       const thinkScale = 1 + (orbMatRef.current?.uniforms.uThinkingIntensity.value ?? 0) * 0.06;
-      orbRef.current.scale.setScalar(breathe * thinkScale);
+      orbRef.current.scale.setScalar(breathe * thinkScale * birthScale.current);
     }
   });
 
@@ -108,8 +131,8 @@ export function NovaOrb() {
         />
       </mesh>
 
-      {/* Core orb sphere */}
-      <mesh ref={orbRef} renderOrder={1}>
+      {/* Core orb sphere — starts at scale 0, grows via birth spring */}
+      <mesh ref={orbRef} renderOrder={1} scale={0}>
         {/* detail=7 → ~163k triangles — prevents faceting from vertex displacement */}
         <icosahedronGeometry args={[1.0, 300]} />
         <shaderMaterial
