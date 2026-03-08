@@ -139,6 +139,20 @@ export class NovaController {
     return this.goalService.setActive(id, body.active);
   }
 
+  /** POST /api/nova/goals/proposals/:id/approve */
+  @Post('goals/proposals/:id/approve')
+  approveGoalProposal(@Param('id') id: string) {
+    this.agentLoop.approveGoal(id);
+    return { ok: true };
+  }
+
+  /** POST /api/nova/goals/proposals/:id/reject */
+  @Post('goals/proposals/:id/reject')
+  rejectGoalProposal(@Param('id') id: string) {
+    this.agentLoop.rejectGoal(id);
+    return { ok: true };
+  }
+
   // ── Research Summary ──────────────────────────────────────────────────────
 
   /** GET /api/nova/summary?refresh=1 */

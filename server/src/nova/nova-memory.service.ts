@@ -7,6 +7,7 @@ export interface MemoryPoint {
   id: string;
   text: string;
   type: 'main' | 'association' | 'voice';
+  status: 'raw' | 'consolidated';
   timestamp: number;
   x: number;
   y: number;
@@ -59,6 +60,13 @@ export class NovaMemoryService implements OnModuleInit {
       throw new Error(`Ollama embed failed: ${res.status} ${body.slice(0, 200)}`);
     }
     const data = (await res.json()) as { embedding: number[] };
+    if (!Array.isArray(data.embedding) || data.embedding.length === 0) {
+      this.logger.error(
+        `[embed] Model "${EMBED_MODEL}" returned empty embedding for text: "${text.slice(0, 60)}". ` +
+        `Make sure the model is pulled: ollama pull ${EMBED_MODEL}`,
+      );
+      throw new Error(`Empty embedding returned by ${EMBED_MODEL}`);
+    }
     return data.embedding;
   }
 
@@ -190,6 +198,7 @@ export class NovaMemoryService implements OnModuleInit {
       id:        String(p.id),
       text:      String(p.payload?.['text'] ?? ''),
       type:      (p.payload?.['type'] as 'main' | 'association' | 'voice') ?? 'main',
+      status:    (p.payload?.['status'] as 'raw' | 'consolidated') ?? 'raw',
       timestamp: Number(p.payload?.['timestamp'] ?? 0),
       x:         norm(coords[i][0], xMin, xMax),
       y:         norm(coords[i][1], yMin, yMax),

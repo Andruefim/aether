@@ -6,6 +6,7 @@ export interface ConstellationPoint {
   id: string;
   text: string;
   type: 'main' | 'association' | 'voice';
+  status: 'raw' | 'consolidated';
   timestamp: number;
   x: number;
   y: number;
@@ -47,6 +48,7 @@ export function ConstellationTooltip({ state }: { state: TooltipState }) {
   );
 }
 
+// Color by memory type
 const TYPE_COLOR: Record<string, THREE.Color> = {
   main:        new THREE.Color('#a855f7'),
   association: new THREE.Color('#60a5fa'),
@@ -55,13 +57,22 @@ const TYPE_COLOR: Record<string, THREE.Color> = {
 const DEFAULT_COLOR   = new THREE.Color('#6b7280');
 const HIGHLIGHT_COLOR = new THREE.Color('#c4b5fd');
 
+// Status modifiers — consolidated points are brighter & larger
+const STATUS_BRIGHTNESS: Record<string, number> = {
+  raw:          0.55,   // dim — unprocessed data
+  consolidated: 1.0,    // full brightness — refined knowledge
+};
+const STATUS_SCALE: Record<string, number> = {
+  raw:          0.7,    // small dots
+  consolidated: 1.3,    // larger stars
+};
+
 const POLL_INTERVAL_MS = 12000;
 const MAX_LINE_DIST    = 1.0;
 const MAX_LINES        = 200;
-const POINT_SCALE      = 1.6;   // base size — small stars
-const POINT_SCALE_HI   = 2.2;   // highlighted size (was 2.5*1.8=4.5, now small)
+const POINT_SCALE      = 1.6;
+const POINT_SCALE_HI   = 2.2;
 const POS_LERP_SPEED   = 0.6;
-// Divisor in gl_PointSize — lower = smaller points at same distance
 const SIZE_DIVISOR     = 180.0;
 
 async function fetchProject(): Promise<ConstellationPoint[]> {
@@ -162,12 +173,15 @@ export function ConstellationField({ highlightIdsRef, onTooltip }: Props) {
       pos[i * 3 + 2] = cur.z;
 
       const ageSec    = (now - p.timestamp) / 1000;
-      const brightness = Math.max(0.25, 1 - ageSec / 3600);
+      const ageFade   = Math.max(0.25, 1 - ageSec / 3600);
+      const statusB   = STATUS_BRIGHTNESS[p.status] ?? 0.55;
+      const brightness = ageFade * statusB;
       const base = TYPE_COLOR[p.type] ?? DEFAULT_COLOR;
       col[i * 3]     = base.r * brightness;
       col[i * 3 + 1] = base.g * brightness;
       col[i * 3 + 2] = base.b * brightness;
-      siz[i] = POINT_SCALE * (0.6 + 0.4 * brightness);
+      const statusScale = STATUS_SCALE[p.status] ?? 0.7;
+      siz[i] = POINT_SCALE * statusScale * (0.7 + 0.3 * ageFade);
     });
 
     if (pointsRef.current) {
@@ -328,10 +342,13 @@ export function ConstellationField({ highlightIdsRef, onTooltip }: Props) {
         sizBuf.setX(i, POINT_SCALE_HI);
       } else {
         const ageSec    = (now - p.timestamp) / 1000;
-        const brightness = Math.max(0.25, 1 - ageSec / 3600);
+        const ageFade   = Math.max(0.25, 1 - ageSec / 3600);
+        const statusB   = STATUS_BRIGHTNESS[p.status] ?? 0.55;
+        const brightness = ageFade * statusB;
         const base = TYPE_COLOR[p.type] ?? DEFAULT_COLOR;
         colBuf.setXYZ(i, base.r * brightness, base.g * brightness, base.b * brightness);
-        sizBuf.setX(i, POINT_SCALE * (0.6 + 0.4 * brightness));
+        const statusScale = STATUS_SCALE[p.status] ?? 0.7;
+        sizBuf.setX(i, POINT_SCALE * statusScale * (0.7 + 0.3 * ageFade));
       }
     }
 

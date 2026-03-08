@@ -10,6 +10,12 @@ export interface ThoughtEvent {
   ts: number;
 }
 
+interface GoalProposal {
+  proposalId: string;
+  goal: string;
+  reasoning: string;
+}
+
 const MAX_EVENTS = 60;
 
 const PHASE_ICON: Record<ThoughtPhase, string> = {
@@ -53,12 +59,13 @@ interface Props {
 }
 
 export function ThoughtStreamWidget({ onAnswer, onWake }: Props) {
-  const [events, setEvents]       = useState<ThoughtEvent[]>([]);
-  const [sleeping, setSleeping]   = useState(false);
-  const [question, setQuestion]   = useState<string | null>(null);
-  const [answer, setAnswer]       = useState('');
-  const [collapsed, setCollapsed] = useState(false);
-  const [connected, setConnected] = useState(false);
+  const [events, setEvents]         = useState<ThoughtEvent[]>([]);
+  const [sleeping, setSleeping]     = useState(false);
+  const [question, setQuestion]     = useState<string | null>(null);
+  const [answer, setAnswer]         = useState('');
+  const [collapsed, setCollapsed]   = useState(false);
+  const [connected, setConnected]   = useState(false);
+  const [proposal, setProposal]     = useState<GoalProposal | null>(null);
   const bottomRef   = useRef<HTMLDivElement>(null);
   const esRef       = useRef<EventSource | null>(null);
 
@@ -69,8 +76,19 @@ export function ThoughtStreamWidget({ onAnswer, onWake }: Props) {
     });
     if (ev.phase === 'sleep') setSleeping(true);
     if (ev.phase === 'wake')  { setSleeping(false); onWake?.(); }
-    if (ev.phase === 'question') setQuestion(ev.text);
-  }, []);
+    if (ev.phase === 'question') {
+      const d = ev.data as Record<string, unknown> | undefined;
+      if (d?.type === 'propose_goal') {
+        setProposal({
+          proposalId: String(d.proposalId ?? ''),
+          goal:       String(d.goal ?? ''),
+          reasoning:  String(d.reasoning ?? ''),
+        });
+      } else {
+        setQuestion(ev.text);
+      }
+    }
+  }, [onWake]);
 
   useEffect(() => {
     const connect = () => {
@@ -214,6 +232,67 @@ export function ThoughtStreamWidget({ onAnswer, onWake }: Props) {
             ))}
             <div ref={bottomRef} />
           </div>
+
+          {/* Goal proposal from Nova */}
+          {proposal && (
+            <div
+              style={{
+                borderTop: '1px solid rgba(52,211,153,0.3)',
+                padding: '8px 10px',
+                flexShrink: 0,
+              }}
+            >
+              <div style={{ color: '#6ee7b7', fontSize: 11, marginBottom: 4, fontWeight: 600 }}>
+                🎯 Nova proposes a new goal:
+              </div>
+              <div style={{ color: '#d1fae5', fontSize: 11, lineHeight: 1.5, marginBottom: 4 }}>
+                {proposal.goal}
+              </div>
+              {proposal.reasoning && (
+                <div style={{ color: '#6b7280', fontSize: 10, lineHeight: 1.4, marginBottom: 6, fontStyle: 'italic' }}>
+                  {proposal.reasoning}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={() => {
+                    fetch(`/api/nova/goals/proposals/${proposal.proposalId}/approve`, { method: 'POST' }).catch(() => {});
+                    setProposal(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    background: 'rgba(52,211,153,0.18)',
+                    border: '1px solid rgba(52,211,153,0.4)',
+                    borderRadius: 6,
+                    padding: '4px 0',
+                    color: '#6ee7b7',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >
+                  ✓ Accept
+                </button>
+                <button
+                  onClick={() => {
+                    fetch(`/api/nova/goals/proposals/${proposal.proposalId}/reject`, { method: 'POST' }).catch(() => {});
+                    setProposal(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    background: 'rgba(248,113,113,0.12)',
+                    border: '1px solid rgba(248,113,113,0.3)',
+                    borderRadius: 6,
+                    padding: '4px 0',
+                    color: '#f87171',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >
+                  ✕ Reject
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Question from Nova */}
           {question && (
