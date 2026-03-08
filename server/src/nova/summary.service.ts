@@ -37,6 +37,10 @@ export class SummaryService {
   // Per-goal cache: goalId → { summary, ts }
   private readonly goalCache = new Map<string, { summary: GoalSummary; ts: number }>();
 
+  // Global mutex: if a generation is already running, new callers wait for it
+  // instead of firing duplicate LLM requests.
+  private inflightAll: Promise<GoalSummary[]> | null = null;
+
   constructor(
     private readonly config:  ConfigService,
     private readonly ollama:  OllamaService,
@@ -49,15 +53,32 @@ export class SummaryService {
     this.goalCache.clear();
   }
 
-  /** Get summaries for all active goals */
+  /** Get summaries for all active goals — serialized + deduplicated */
   async getAllGoalSummaries(forceRefresh = false): Promise<GoalSummary[]> {
+    // If another caller is already generating, share the same promise
+    if (this.inflightAll && !forceRefresh) {
+      this.logger.debug('Summary: reusing in-flight request');
+      return this.inflightAll;
+    }
+
+    this.inflightAll = this.generateAllSerially(forceRefresh).finally(() => {
+      this.inflightAll = null;
+    });
+
+    return this.inflightAll;
+  }
+
+  private async generateAllSerially(forceRefresh: boolean): Promise<GoalSummary[]> {
     const activeGoals = await this.goals.findActive();
     if (activeGoals.length === 0) return [];
 
-    const results = await Promise.all(
-      activeGoals.map((g) => this.getGoalSummary(g.id, g.text, forceRefresh)),
-    );
-    return results.filter((s): s is GoalSummary => s !== null);
+    const results: GoalSummary[] = [];
+    // Run one goal at a time to avoid concurrent Ollama requests
+    for (const g of activeGoals) {
+      const s = await this.getGoalSummary(g.id, g.text, forceRefresh);
+      if (s) results.push(s);
+    }
+    return results;
   }
 
   /** Get summary for a single goal using semantic recall */
