@@ -21,8 +21,10 @@ import { buildPlanPrompt, parseJson } from './agent-loop/prompts';
 export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AgentLoopService.name);
 
-  private running = false;
-  private paused  = false;
+  private running  = false;
+  private paused   = false;
+  private isBusy   = false;                        // true while runCycle() is executing
+  private busyResolvers: Array<() => void> = [];   // resolved when current tick finishes
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   private state: ConsciousnessState = initialState();
@@ -46,15 +48,27 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
 
   // ── GPU pause/resume ──────────────────────────────────────────────────────
 
-  pause(): () => void {
+  /**
+   * Pause the agent loop so the caller can use the GPU exclusively.
+   * If a tick cycle is currently running, waits for it to finish first.
+   * Returns a resume callback — call it (or use try/finally) when done.
+   */
+  async pause(): Promise<() => void> {
     if (!this.paused) {
       this.paused = true;
       if (this.timer) {
         clearTimeout(this.timer);
         this.timer = null;
-        this.logger.debug('AgentLoop paused (GPU hand-off)');
       }
     }
+
+    // Wait for any in-flight tick to complete before handing off the GPU
+    if (this.isBusy) {
+      this.logger.debug('AgentLoop paused — waiting for in-flight tick to finish...');
+      await new Promise<void>((resolve) => this.busyResolvers.push(resolve));
+    }
+
+    this.logger.debug('AgentLoop paused (GPU hand-off)');
     return () => this.resume();
   }
 
@@ -110,11 +124,17 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     let urgency = 0.4;
+    this.isBusy = true;
     try {
       urgency = await this.runCycle();
     } catch (err) {
       this.logger.error(`AgentLoop error: ${err instanceof Error ? err.message : String(err)}`);
       this.bus.emit({ phase: 'error', text: err instanceof Error ? err.message : 'Unknown error', ts: Date.now() });
+    } finally {
+      this.isBusy = false;
+      // Unblock anyone waiting in pause()
+      for (const resolve of this.busyResolvers) resolve();
+      this.busyResolvers = [];
     }
     this.scheduleNext(urgency);
   }

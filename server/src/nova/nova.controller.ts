@@ -35,19 +35,22 @@ export class NovaController {
         s.complete();
       });
     }
-    const resume = this.agentLoop.pause();
+    // Pause the agent loop, waiting for any in-flight tick to finish first,
+    // then stream the user request exclusively on the GPU.
     return new Observable((subscriber) => {
-      const inner = this.novaService.streamInput({
-        text:       body.text.trim(),
-        history:    body.history ?? [],
-        screenshot: body.screenshot,
-      });
-      const sub = inner.subscribe({
-        next:     (v) => subscriber.next(v),
-        error:    (e) => { subscriber.error(e); resume(); },
-        complete: ()  => { subscriber.complete(); resume(); },
-      });
-      return () => { sub.unsubscribe(); resume(); };
+      this.agentLoop.pause().then((resume) => {
+        const inner = this.novaService.streamInput({
+          text:       body.text.trim(),
+          history:    body.history ?? [],
+          screenshot: body.screenshot,
+        });
+        const sub = inner.subscribe({
+          next:     (v) => subscriber.next(v),
+          error:    (e) => { subscriber.error(e); resume(); },
+          complete: ()  => { subscriber.complete(); resume(); },
+        });
+        subscriber.add(() => { sub.unsubscribe(); resume(); });
+      }).catch((err: unknown) => subscriber.error(err));
     });
   }
 
@@ -168,7 +171,7 @@ export class NovaController {
   @Get('summary')
   async getSummary(@Query('refresh') refresh?: string) {
     const forceRefresh = refresh === '1' || refresh === 'true';
-    const resume = this.agentLoop.pause();
+    const resume = await this.agentLoop.pause();
     try {
       const goalSummaries = await this.summaryService.getAllGoalSummaries(forceRefresh);
       if (goalSummaries.length === 0) {
@@ -185,7 +188,7 @@ export class NovaController {
   @Get('summary/goals')
   async getGoalSummaries(@Query('refresh') refresh?: string) {
     const forceRefresh = refresh === '1' || refresh === 'true';
-    const resume = this.agentLoop.pause();
+    const resume = await this.agentLoop.pause();
     try {
       return await this.summaryService.getAllGoalSummaries(forceRefresh);
     } finally {
