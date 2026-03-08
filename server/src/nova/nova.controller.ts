@@ -1,13 +1,18 @@
-import { Controller, Post, Get, Body, Query, BadRequestException, Sse } from '@nestjs/common';
+import { Controller, Post, Get, Body, Query, BadRequestException, Sse, Res } from '@nestjs/common';
 import { Observable } from 'rxjs';
+import { Response } from 'express';
 import { NovaService, NovaInputDto } from './nova.service';
 import { NovaMemoryService } from './nova-memory.service';
+import { ThoughtBusService } from './thought-bus.service';
+import { AgentLoopService } from './agent-loop.service';
 
 @Controller('nova')
 export class NovaController {
   constructor(
     private readonly novaService: NovaService,
     private readonly memory: NovaMemoryService,
+    private readonly thoughtBus: ThoughtBusService,
+    private readonly agentLoop: AgentLoopService,
   ) {}
 
   /**
@@ -66,5 +71,41 @@ export class NovaController {
     if (!q?.trim()) throw new BadRequestException('q is required');
     const topK = k ? Math.min(parseInt(k, 10), 50) : 10;
     return this.memory.search(q.trim(), topK);
+  }
+
+  /**
+   * GET /api/nova/thoughts
+   * SSE stream of Nova's autonomous thought events.
+   */
+  @Get('thoughts')
+  thoughtStream(@Res() res: Response) {
+    res.setHeader('Content-Type',  'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection',    'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const unsub = this.thoughtBus.subscribe((event) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    });
+
+    // Heartbeat every 20s to keep connection alive
+    const hb = setInterval(() => res.write(': heartbeat\n\n'), 20_000);
+
+    res.on('close', () => {
+      unsub();
+      clearInterval(hb);
+    });
+  }
+
+  /**
+   * POST /api/nova/answer
+   * Body: { answer: string }
+   * Pass user's reply to Nova's pending question.
+   */
+  @Post('answer')
+  receiveAnswer(@Body() body: { answer: string }) {
+    this.agentLoop.receiveAnswer(body.answer ?? '');
+    return { ok: true };
   }
 }

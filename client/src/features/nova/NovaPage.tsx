@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { AetherInputBar } from '../aether/components';
 import { NovaScene, NovaStatusOverlay } from './components';
 import { ConstellationTooltip, type TooltipState } from './components/ConstellationField';
+import { ThoughtStreamWidget } from './components/ThoughtStreamWidget';
 import { useNovaInput, useNovaVoiceAgent } from './hooks';
 import { useAetherStore } from '../../core';
 import type { IncomingToken, StreamType } from './components/TokenGlyphSystem';
@@ -102,6 +103,15 @@ export function NovaPage() {
 
       <NovaStatusOverlay dialogueText={null} onDismiss={() => {}} />
       <ConstellationTooltip state={tooltip} />
+      <ThoughtStreamWidget
+        onAnswer={(ans) => {
+          fetch('/api/nova/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ answer: ans }),
+          }).catch(() => {});
+        }}
+      />
 
       <AetherInputBar
         onSubmit={handleSubmit}
