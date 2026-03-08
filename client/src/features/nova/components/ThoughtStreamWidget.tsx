@@ -48,9 +48,11 @@ function formatTool(event: ThoughtEvent): string {
 interface Props {
   /** Called when user answers Nova's question */
   onAnswer: (answer: string) => void;
+  /** Called when Nova wakes from sleep — parent refreshes summary */
+  onWake?: () => void;
 }
 
-export function ThoughtStreamWidget({ onAnswer }: Props) {
+export function ThoughtStreamWidget({ onAnswer, onWake }: Props) {
   const [events, setEvents]       = useState<ThoughtEvent[]>([]);
   const [sleeping, setSleeping]   = useState(false);
   const [question, setQuestion]   = useState<string | null>(null);
@@ -66,7 +68,7 @@ export function ThoughtStreamWidget({ onAnswer }: Props) {
       return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
     });
     if (ev.phase === 'sleep') setSleeping(true);
-    if (ev.phase === 'wake')  setSleeping(false);
+    if (ev.phase === 'wake')  { setSleeping(false); onWake?.(); }
     if (ev.phase === 'question') setQuestion(ev.text);
   }, []);
 

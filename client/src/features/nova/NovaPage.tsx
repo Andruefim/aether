@@ -4,6 +4,8 @@ import { AetherInputBar } from '../aether/components';
 import { NovaScene, NovaStatusOverlay } from './components';
 import { ConstellationTooltip, type TooltipState } from './components/ConstellationField';
 import { ThoughtStreamWidget } from './components/ThoughtStreamWidget';
+import { GoalsWidget } from './components/GoalsWidget';
+import { ResearchSummaryWidget } from './components/ResearchSummaryWidget';
 import { useNovaInput, useNovaVoiceAgent } from './hooks';
 import { useAetherStore } from '../../core';
 import type { IncomingToken, StreamType } from './components/TokenGlyphSystem';
@@ -48,6 +50,8 @@ export function NovaPage() {
   const staggerCancel   = useRef<(() => void) | null>(null);
 
   const [tooltip, setTooltip] = useState<TooltipState>({ text: '', x: 0, y: 0, visible: false });
+  // Bumped every time Nova wakes from sleep — triggers summary refresh
+  const [wakeSignal, setWakeSignal] = useState(0);
 
   // When set to a non-empty string, triggers the "settle" animation in TokenGlyphSystem
   const settleSignalRef = useRef<string>('');
@@ -103,6 +107,11 @@ export function NovaPage() {
 
       <NovaStatusOverlay dialogueText={null} onDismiss={() => {}} />
       <ConstellationTooltip state={tooltip} />
+
+      {/* Left: research goals */}
+      <GoalsWidget />
+
+      {/* Right centre: thought stream */}
       <ThoughtStreamWidget
         onAnswer={(ans) => {
           fetch('/api/nova/answer', {
@@ -111,7 +120,11 @@ export function NovaPage() {
             body: JSON.stringify({ answer: ans }),
           }).catch(() => {});
         }}
+        onWake={() => setWakeSignal((n) => n + 1)}
       />
+
+      {/* Right: research summary */}
+      <ResearchSummaryWidget wakeSignal={wakeSignal} />
 
       <AetherInputBar
         onSubmit={handleSubmit}

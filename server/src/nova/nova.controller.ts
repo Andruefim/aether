@@ -1,10 +1,12 @@
-import { Controller, Post, Get, Body, Query, BadRequestException, Sse, Res } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Body, Query, Param, BadRequestException, Sse, Res } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { Response } from 'express';
 import { NovaService, NovaInputDto } from './nova.service';
 import { NovaMemoryService } from './nova-memory.service';
 import { ThoughtBusService } from './thought-bus.service';
 import { AgentLoopService } from './agent-loop.service';
+import { GoalService } from './goal.service';
+import { SummaryService } from './summary.service';
 
 @Controller('nova')
 export class NovaController {
@@ -13,6 +15,8 @@ export class NovaController {
     private readonly memory: NovaMemoryService,
     private readonly thoughtBus: ThoughtBusService,
     private readonly agentLoop: AgentLoopService,
+    private readonly goalService: GoalService,
+    private readonly summaryService: SummaryService,
   ) {}
 
   /**
@@ -100,12 +104,49 @@ export class NovaController {
 
   /**
    * POST /api/nova/answer
-   * Body: { answer: string }
-   * Pass user's reply to Nova's pending question.
    */
   @Post('answer')
   receiveAnswer(@Body() body: { answer: string }) {
     this.agentLoop.receiveAnswer(body.answer ?? '');
     return { ok: true };
+  }
+
+  // ── Goals ─────────────────────────────────────────────────────────────────
+
+  /** GET /api/nova/goals */
+  @Get('goals')
+  async getGoals() {
+    return this.goalService.findAll();
+  }
+
+  /** POST /api/nova/goals  { text, priority? } */
+  @Post('goals')
+  async createGoal(@Body() body: { text: string; priority?: number }) {
+    if (!body.text?.trim()) throw new BadRequestException('text is required');
+    return this.goalService.create(body.text.trim(), body.priority ?? 0);
+  }
+
+  /** DELETE /api/nova/goals/:id */
+  @Delete('goals/:id')
+  async deleteGoal(@Param('id') id: string) {
+    await this.goalService.remove(id);
+    return { ok: true };
+  }
+
+  /** POST /api/nova/goals/:id/toggle  { active: boolean } */
+  @Post('goals/:id/toggle')
+  async toggleGoal(@Param('id') id: string, @Body() body: { active: boolean }) {
+    return this.goalService.setActive(id, body.active);
+  }
+
+  // ── Research Summary ──────────────────────────────────────────────────────
+
+  /** GET /api/nova/summary?refresh=1 */
+  @Get('summary')
+  async getSummary(@Query('refresh') refresh?: string) {
+    const forceRefresh = refresh === '1' || refresh === 'true';
+    const summary = await this.summaryService.getSummary(forceRefresh);
+    if (!summary) return { title: 'No data yet', bullets: [], insight: '', generatedAt: 0, memoryCount: 0 };
+    return summary;
   }
 }

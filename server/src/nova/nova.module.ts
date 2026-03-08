@@ -1,13 +1,18 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { NovaController } from './nova.controller';
 import { NovaService } from './nova.service';
 import { NovaMemoryService } from './nova-memory.service';
 import { ThoughtBusService } from './thought-bus.service';
 import { AgentLoopService } from './agent-loop.service';
 import { AgentToolsService } from './agent-tools.service';
+import { GoalService } from './goal.service';
+import { SummaryService } from './summary.service';
+import { NovaGoal } from './entities/nova-goal.entity';
 import { OllamaService } from '../generate/ollama.service';
 
 @Module({
+  imports: [TypeOrmModule.forFeature([NovaGoal])],
   controllers: [NovaController],
   providers: [
     NovaService,
@@ -15,6 +20,8 @@ import { OllamaService } from '../generate/ollama.service';
     ThoughtBusService,
     AgentLoopService,
     AgentToolsService,
+    GoalService,
+    SummaryService,
     OllamaService,
   ],
 })

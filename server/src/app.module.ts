@@ -6,6 +6,7 @@ import { WidgetsModule } from './widgets/widgets.module';
 import { GenerateModule } from './generate/generate.module';
 import { Widget } from './widgets/entities/widget.entity';
 import { WidgetData } from './widgets/entities/widget-data.entity';
+import { NovaGoal } from './nova/entities/nova-goal.entity';
 import { WebSearchModule } from './web-search/web-search.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { AetherModule } from './aether/aether.module';
@@ -29,7 +30,7 @@ const rootEnvPath = join(__dirname, '..', '..', '.env');
         username: config.get('MYSQL_USER', 'root'),
         password: config.get('MYSQL_PASSWORD', ''),
         database: config.get('MYSQL_DATABASE', 'aether'),
-        entities: [Widget, WidgetData],
+        entities: [Widget, WidgetData, NovaGoal],
         synchronize: true,
       }),
     }),

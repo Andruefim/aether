@@ -64,7 +64,11 @@ export class NovaMemoryService implements OnModuleInit {
 
   // ── Store ────────────────────────────────────────────────────────────────
 
-  async store(text: string, type: 'main' | 'association' | 'voice' = 'main'): Promise<string> {
+  async store(
+    text: string,
+    type: 'main' | 'association' | 'voice' = 'main',
+    status: 'raw' | 'consolidated' = 'raw',
+  ): Promise<string> {
     const trimmed = text.trim();
     if (!trimmed) throw new Error('text is empty');
 
@@ -82,13 +86,53 @@ export class NovaMemoryService implements OnModuleInit {
         {
           id,
           vector,
-          payload: { text: trimmed, type, timestamp: Date.now() },
+          payload: { text: trimmed, type, status, timestamp: Date.now() },
         },
       ],
     });
 
-    this.logger.log(`Stored memory [${type}]: "${trimmed.slice(0, 60)}"`);
+    this.logger.log(`Stored memory [${type}/${status}]: "${trimmed.slice(0, 60)}"`);
     return id;
+  }
+
+  /** Count how many raw (unconsolidated) memories are stored */
+  async countRaw(): Promise<number> {
+    try {
+      const result = await this.client.count(COLLECTION, {
+        filter: {
+          must: [{ key: 'status', match: { value: 'raw' } }],
+        },
+      });
+      return result.count;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Delete a set of points by ID (used after consolidation) */
+  async deleteMany(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.client.delete(COLLECTION, { points: ids });
+  }
+
+  /** Fetch raw points for consolidation */
+  async fetchRaw(limit = 50): Promise<Array<{ id: string; text: string }>> {
+    try {
+      const result = await this.client.scroll(COLLECTION, {
+        limit,
+        with_payload: true,
+        with_vector: false,
+        filter: {
+          must: [{ key: 'status', match: { value: 'raw' } }],
+        },
+      });
+      return result.points.map((p) => ({
+        id:   String(p.id),
+        text: String((p.payload as Record<string, unknown>)?.['text'] ?? ''),
+      })).filter((p) => p.text.length > 0);
+    } catch {
+      return [];
+    }
   }
 
   // ── Project (UMAP 768d → 3d) ─────────────────────────────────────────────
