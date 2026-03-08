@@ -10,6 +10,8 @@ import { GoalService } from './goal.service';
 import { SummaryService } from './summary.service';
 import { NovaGoal } from './entities/nova-goal.entity';
 import { OllamaService } from '../generate/ollama.service';
+import { AgentActionsService } from './agent-loop/agent-actions.service';
+import { AgentMemoryService } from './agent-loop/agent-memory.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([NovaGoal])],
@@ -20,6 +22,8 @@ import { OllamaService } from '../generate/ollama.service';
     ThoughtBusService,
     AgentLoopService,
     AgentToolsService,
+    AgentActionsService,
+    AgentMemoryService,
     GoalService,
     SummaryService,
     OllamaService,
