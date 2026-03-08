@@ -180,6 +180,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     let plan: {
       action:         string;
       query?:         string;
+      hypothesis?:    string;   // for conduct_experiment
       reasoning:      string;
       urgency:        number;
       mood_after?:    Mood;
@@ -204,7 +205,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     this.state.lastActionType = plan.action;
 
     // Act
-    return this.act(plan.action, plan.query, goalContext, memories, urgency);
+    return this.act(plan.action, plan.query, plan.hypothesis, goalContext, memories, urgency);
   }
 
   // ── Dispatch ───────────────────────────────────────────────────────────────
@@ -212,6 +213,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   private async act(
     action: string,
     query: string | undefined,
+    hypothesis: string | undefined,
     goalContext: string,
     memories: string[],
     urgency: number,
@@ -253,6 +255,13 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
           this.pendingGoals.set(id, goal);
           void reasoning;
         });
+
+      case 'conduct_experiment':
+        return this.actions.doExperiment(
+          hypothesis ?? memories[0] ?? goalContext,
+          goalContext,
+          this.state,
+        );
 
       case 'web_search':
       default:

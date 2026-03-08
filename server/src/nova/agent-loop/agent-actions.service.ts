@@ -14,18 +14,20 @@ import {
   parseJson,
 } from './prompts';
 import { AgentMemoryService } from './agent-memory.service';
+import { ExperimentService } from '../../experiment/experiment.service';
 
 @Injectable()
 export class AgentActionsService {
   private readonly logger = new Logger(AgentActionsService.name);
 
   constructor(
-    private readonly config:  ConfigService,
-    private readonly ollama:  OllamaService,
-    private readonly memory:  NovaMemoryService,
-    private readonly bus:     ThoughtBusService,
-    private readonly tools:   AgentToolsService,
-    private readonly memSvc:  AgentMemoryService,
+    private readonly config:      ConfigService,
+    private readonly ollama:      OllamaService,
+    private readonly memory:      NovaMemoryService,
+    private readonly bus:         ThoughtBusService,
+    private readonly tools:       AgentToolsService,
+    private readonly memSvc:      AgentMemoryService,
+    private readonly experiments: ExperimentService,
   ) {}
 
   private get fastModel() {
@@ -259,5 +261,42 @@ export class AgentActionsService {
     });
 
     return 0.4;
+  }
+
+  // ── conduct_experiment ─────────────────────────────────────────────────────
+
+  async doExperiment(
+    hypothesis: string,
+    goalContext: string,
+    state: ConsciousnessState,
+  ): Promise<number> {
+    if (!hypothesis?.trim()) {
+      this.bus.emit({ phase: 'act', text: 'No hypothesis for experiment.', ts: Date.now() });
+      return 0.3;
+    }
+
+    this.bus.emit({
+      phase: 'act',
+      text:  `Nova Lab: conducting experiment — "${hypothesis.slice(0, 80)}"`,
+      tool:  'experiment',
+      ts:    Date.now(),
+    });
+
+    try {
+      const result = await this.experiments.runExperiment(hypothesis, goalContext);
+
+      if (result.success) {
+        state.curiosity = Math.min(1, state.curiosity + 0.15);
+        state.energy    = Math.max(0, state.energy - 0.08);
+        state.mood      = 'focused';
+        return 0.7;
+      } else {
+        state.curiosity = Math.max(0, state.curiosity - 0.05);
+        return 0.3;
+      }
+    } catch (err) {
+      this.logger.warn(`Experiment error: ${err instanceof Error ? err.message : String(err)}`);
+      return 0.3;
+    }
   }
 }

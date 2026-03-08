@@ -23,7 +23,7 @@ export interface AetherMessage {
   timestamp: number;
 }
 
-export type AppMode = 'desktop' | 'aether' | 'nova';
+export type AppMode = 'desktop' | 'aether' | 'nova' | 'space';
 
 interface AetherStore {
   // ── App mode ──────────────────────────────────────────────────────────────

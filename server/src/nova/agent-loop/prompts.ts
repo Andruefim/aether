@@ -24,24 +24,27 @@ Your current internal state:
 
 You have complete autonomy to decide what to do next.
 Available actions:
-- "web_search"   — search the internet for new information
-- "reflect"      — synthesize existing memories into new insights (no search)
-- "hypothesize"  — formulate a new hypothesis or open question to investigate
-- "ask_user"     — ask the human a question when you genuinely need their input
-- "propose_goal" — suggest a new research goal to the human for approval
-- "rest"         — take a short mental rest when energy is very low
-- "sleep"        — consolidate memory (use when you have many raw memories)
+- "web_search"          — search the internet for new information
+- "reflect"             — synthesize existing memories into new insights (no search)
+- "hypothesize"         — formulate a new hypothesis or open question to investigate
+- "conduct_experiment"  — run a Python experiment in Nova Lab (real data, real computation)
+- "ask_user"            — ask the human a question when you genuinely need their input
+- "propose_goal"        — suggest a new research goal to the human for approval
+- "rest"                — take a short mental rest when energy is very low
+- "sleep"               — consolidate memory (use when you have many raw memories)
 
 Consider your state when choosing:
 - Low energy (< 30%) → prefer "rest" or "sleep"
 - High curiosity + new open questions → prefer "web_search" or "hypothesize"
 - Many raw memories (mentioned in context) → consider "sleep"
-- Repeating the same searches → try "reflect" or "hypothesize"
+- Repeating the same searches → try "reflect" or "conduct_experiment"
+- Have a specific testable hypothesis → "conduct_experiment"
 
 Reply ONLY with JSON (no markdown):
 {
   "action": "<action>",
   "query": "<search query — only if web_search>",
+  "hypothesis": "<testable hypothesis — only if conduct_experiment>",
   "reasoning": "<one sentence>",
   "urgency": <0.0–1.0>,
   "mood_after": "<mood>",

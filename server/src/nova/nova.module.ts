@@ -12,9 +12,10 @@ import { NovaGoal } from './entities/nova-goal.entity';
 import { OllamaService } from '../generate/ollama.service';
 import { AgentActionsService } from './agent-loop/agent-actions.service';
 import { AgentMemoryService } from './agent-loop/agent-memory.service';
+import { ExperimentModule } from '../experiment/experiment.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([NovaGoal])],
+  imports: [TypeOrmModule.forFeature([NovaGoal]), ExperimentModule],
   controllers: [NovaController],
   providers: [
     NovaService,
