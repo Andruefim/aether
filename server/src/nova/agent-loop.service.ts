@@ -35,7 +35,9 @@ You work autonomously, choosing your own actions based on your state and goals.
 Be concise, factual, and intellectually honest. Prefer scientific sources.`;
 
 function buildPlanPrompt(state: ConsciousnessState): string {
+  const today = new Date().toISOString().slice(0, 10);
   return `${NOVA_DIRECTIVE}
+Today's date: ${today}. Always use this exact date when forming search queries — never guess the year.
 
 You are in the PLAN phase of your cognitive cycle.
 
@@ -250,7 +252,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       plan = JSON.parse(clean) as typeof plan;
       if (!plan.action) throw new Error('no action in plan');
     } catch {
-      plan = { action: 'web_search', query: `${goalContext} 2025`, reasoning: 'Fallback plan', urgency: 0.5 };
+      plan = { action: 'web_search', query: `${goalContext} ${new Date().getFullYear()}`, reasoning: 'Fallback plan', urgency: 0.5 };
     }
 
     // Apply mood update
@@ -316,7 +318,8 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   private async doWebSearch(query: string, goalContext: string): Promise<number> {
     // Avoid repeating same topic
     if (this.state.recentTopics.includes(query)) {
-      query = `${goalContext} recent advances ${new Date().getFullYear()}`;
+      const today = new Date().toISOString().slice(0, 10);
+      query = `${goalContext} latest research ${today.slice(0, 7)}`;
     }
     this.state.recentTopics = [...this.state.recentTopics.slice(-5), query];
 
