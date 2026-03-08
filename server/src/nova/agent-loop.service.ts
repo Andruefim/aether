@@ -124,6 +124,7 @@ Score guide: 0-3 = trivial/irrelevant, 4-6 = useful but not critical, 7-10 = hig
 export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AgentLoopService.name);
   private running  = false;
+  private paused   = false;   // true while an external caller holds the GPU (e.g. summary generation)
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   private state: ConsciousnessState = {
@@ -154,6 +155,33 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit()    { setTimeout(() => this.startLoop(), 8_000); }
   onModuleDestroy() { this.running = false; if (this.timer) clearTimeout(this.timer); }
+
+  /**
+   * Pause the agent loop so the caller can use the GPU exclusively.
+   * The current tick is allowed to finish; the next scheduled tick is
+   * cancelled and rescheduled after resume() is called.
+   * Returns a resume function for convenience.
+   */
+  pause(): () => void {
+    if (!this.paused) {
+      this.paused = true;
+      if (this.timer) {
+        clearTimeout(this.timer);
+        this.timer = null;
+        this.logger.debug('AgentLoop paused (GPU hand-off)');
+      }
+    }
+    return () => this.resume();
+  }
+
+  resume() {
+    if (this.paused) {
+      this.paused = false;
+      this.logger.debug('AgentLoop resumed');
+      // Schedule next tick with neutral urgency so we don't restart too eagerly
+      this.scheduleNext(0.3);
+    }
+  }
 
   receiveAnswer(answer: string) {
     if (this.questionResolve) {
@@ -192,6 +220,11 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
 
   private async tick() {
     if (!this.running) return;
+    if (this.paused) {
+      // Someone else is using the GPU; defer until resume() reschedules us
+      this.logger.debug('AgentLoop tick skipped (paused)');
+      return;
+    }
     let urgency = 0.4;
     try {
       urgency = await this.runCycle();

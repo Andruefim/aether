@@ -35,10 +35,19 @@ export class NovaController {
         s.complete();
       });
     }
-    return this.novaService.streamInput({
-      text: body.text.trim(),
-      history: body.history ?? [],
-      screenshot: body.screenshot,
+    const resume = this.agentLoop.pause();
+    return new Observable((subscriber) => {
+      const inner = this.novaService.streamInput({
+        text:       body.text.trim(),
+        history:    body.history ?? [],
+        screenshot: body.screenshot,
+      });
+      const sub = inner.subscribe({
+        next:     (v) => subscriber.next(v),
+        error:    (e) => { subscriber.error(e); resume(); },
+        complete: ()  => { subscriber.complete(); resume(); },
+      });
+      return () => { sub.unsubscribe(); resume(); };
     });
   }
 
@@ -155,12 +164,32 @@ export class NovaController {
 
   // ── Research Summary ──────────────────────────────────────────────────────
 
-  /** GET /api/nova/summary?refresh=1 */
+  /** GET /api/nova/summary?refresh=1  (legacy single-summary endpoint) */
   @Get('summary')
   async getSummary(@Query('refresh') refresh?: string) {
     const forceRefresh = refresh === '1' || refresh === 'true';
-    const summary = await this.summaryService.getSummary(forceRefresh);
-    if (!summary) return { title: 'No data yet', bullets: [], insight: '', generatedAt: 0, memoryCount: 0 };
-    return summary;
+    const resume = this.agentLoop.pause();
+    try {
+      const goalSummaries = await this.summaryService.getAllGoalSummaries(forceRefresh);
+      if (goalSummaries.length === 0) {
+        return { title: 'No data yet', bullets: [], insight: '', generatedAt: 0, memoryCount: 0 };
+      }
+      const best = goalSummaries.sort((a, b) => b.memoryCount - a.memoryCount)[0];
+      return best;
+    } finally {
+      resume();
+    }
+  }
+
+  /** GET /api/nova/summary/goals?refresh=1 — per-goal summaries */
+  @Get('summary/goals')
+  async getGoalSummaries(@Query('refresh') refresh?: string) {
+    const forceRefresh = refresh === '1' || refresh === 'true';
+    const resume = this.agentLoop.pause();
+    try {
+      return await this.summaryService.getAllGoalSummaries(forceRefresh);
+    } finally {
+      resume();
+    }
   }
 }

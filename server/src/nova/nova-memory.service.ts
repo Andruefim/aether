@@ -354,6 +354,45 @@ export class NovaMemoryService implements OnModuleInit {
     });
   }
 
+  // ── Recall with metadata (for per-goal summary) ──────────────────────────
+  // Returns raw payload fields without touching recall_count.
+
+  async recallWithMeta(query: string, topK = 30): Promise<Array<{
+    id: string;
+    text: string;
+    surprise: number;
+    recallCount: number;
+    status: string;
+  }>> {
+    let vector: number[];
+    try {
+      vector = await this.embed(query);
+    } catch {
+      return [];
+    }
+
+    try {
+      const results = await this.client.search(COLLECTION, {
+        vector,
+        limit: topK,
+        with_payload: true,
+        score_threshold: 0.35,
+      });
+      return results.map((r) => {
+        const pay = r.payload as Record<string, unknown> | null ?? {};
+        return {
+          id:          String(r.id),
+          text:        String(pay['text'] ?? ''),
+          surprise:    Number(pay['surprise'] ?? 0.5),
+          recallCount: Number(pay['recall_count'] ?? 0),
+          status:      String(pay['status'] ?? 'raw'),
+        };
+      }).filter((p) => p.text.length > 0);
+    } catch {
+      return [];
+    }
+  }
+
   // ── Search (for highlight + query context) ────────────────────────────────
 
   async search(query: string, topK = 10): Promise<MemoryPoint[]> {
