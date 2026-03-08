@@ -7,16 +7,25 @@ export interface MemoryPoint {
   id: string;
   text: string;
   type: 'main' | 'association' | 'voice';
-  status: 'raw' | 'consolidated';
+  status: 'raw' | 'consolidated' | 'fading';
+  surprise: number;      // 0–1: how novel was this when stored
+  recallCount: number;   // how many times retrieved via recall()
   timestamp: number;
+  lastRecalled: number;  // ms timestamp of last recall (0 if never)
   x: number;
   y: number;
   z: number;
 }
 
-const COLLECTION = 'nova_memory';
+const COLLECTION  = 'nova_memory';
 const EMBED_MODEL = 'nomic-embed-text';
 const VECTOR_SIZE = 768;
+
+// A point is "fading" if not recalled for this many ms (7 days)
+const FADING_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Minimum surprise to bother storing (skip obvious duplicates immediately)
+const MIN_SURPRISE = 0.08;
 
 @Injectable()
 export class NovaMemoryService implements OnModuleInit {
@@ -47,7 +56,7 @@ export class NovaMemoryService implements OnModuleInit {
     }
   }
 
-  // ── Embeddings via Ollama ────────────────────────────────────────────────
+  // ── Embeddings via Ollama ─────────────────────────────────────────────────
 
   private async embed(text: string): Promise<number[]> {
     const res = await fetch(`${this.ollamaBaseUrl}/api/embeddings`, {
@@ -62,15 +71,36 @@ export class NovaMemoryService implements OnModuleInit {
     const data = (await res.json()) as { embedding: number[] };
     if (!Array.isArray(data.embedding) || data.embedding.length === 0) {
       this.logger.error(
-        `[embed] Model "${EMBED_MODEL}" returned empty embedding for text: "${text.slice(0, 60)}". ` +
-        `Make sure the model is pulled: ollama pull ${EMBED_MODEL}`,
+        `[embed] Model "${EMBED_MODEL}" returned empty embedding for: "${text.slice(0, 60)}". ` +
+        `Run: ollama pull ${EMBED_MODEL}`,
       );
       throw new Error(`Empty embedding returned by ${EMBED_MODEL}`);
     }
     return data.embedding;
   }
 
-  // ── Store ────────────────────────────────────────────────────────────────
+  // ── Surprise score ────────────────────────────────────────────────────────
+  // Returns 0–1: how novel the text is vs existing memory.
+  // 1 = completely new, 0 = exact duplicate.
+
+  async computeSurprise(vector: number[]): Promise<number> {
+    try {
+      const results = await this.client.search(COLLECTION, {
+        vector,
+        limit: 1,
+        with_payload: false,
+        score_threshold: 0,
+      });
+      if (results.length === 0) return 1.0; // empty collection → fully novel
+      const topScore = results[0]?.score ?? 0; // cosine similarity 0–1
+      return Math.max(0, 1 - topScore);
+    } catch {
+      return 0.5; // fallback if Qdrant unavailable
+    }
+  }
+
+  // ── Store ─────────────────────────────────────────────────────────────────
+  // Returns: stored id, 'skipped' (embed unavailable), or 'duplicate' (too low surprise)
 
   async store(
     text: string,
@@ -84,32 +114,49 @@ export class NovaMemoryService implements OnModuleInit {
     try {
       vector = await this.embed(trimmed);
     } catch (err) {
-      this.logger.warn(`embed skipped (model unavailable?): ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.warn(`embed skipped: ${err instanceof Error ? err.message : String(err)}`);
       return 'skipped';
     }
+
+    // Compute surprise before storing
+    const surprise = await this.computeSurprise(vector);
+
+    if (surprise < MIN_SURPRISE) {
+      this.logger.debug(`[store] Skipped near-duplicate (surprise=${surprise.toFixed(3)}): "${trimmed.slice(0, 60)}"`);
+      return 'duplicate';
+    }
+
     const id = crypto.randomUUID();
+    const now = Date.now();
 
     await this.client.upsert(COLLECTION, {
-      points: [
-        {
-          id,
-          vector,
-          payload: { text: trimmed, type, status, timestamp: Date.now() },
+      points: [{
+        id,
+        vector,
+        payload: {
+          text:        trimmed,
+          type,
+          status,
+          surprise,
+          recall_count:  0,
+          last_recalled: 0,
+          timestamp:     now,
         },
-      ],
+      }],
     });
 
-    this.logger.log(`Stored memory [${type}/${status}]: "${trimmed.slice(0, 60)}"`);
+    this.logger.log(
+      `Stored [${type}/${status}] surprise=${surprise.toFixed(3)}: "${trimmed.slice(0, 60)}"`,
+    );
     return id;
   }
 
-  /** Count how many raw (unconsolidated) memories are stored */
+  // ── Count raw ─────────────────────────────────────────────────────────────
+
   async countRaw(): Promise<number> {
     try {
       const result = await this.client.count(COLLECTION, {
-        filter: {
-          must: [{ key: 'status', match: { value: 'raw' } }],
-        },
+        filter: { must: [{ key: 'status', match: { value: 'raw' } }] },
       });
       return result.count;
     } catch {
@@ -117,40 +164,140 @@ export class NovaMemoryService implements OnModuleInit {
     }
   }
 
-  /** Delete a set of points by ID (used after consolidation) */
+  // ── Delete many ───────────────────────────────────────────────────────────
+
   async deleteMany(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
     await this.client.delete(COLLECTION, { points: ids });
   }
 
-  /** Fetch raw points for consolidation */
-  async fetchRaw(limit = 50): Promise<Array<{ id: string; text: string }>> {
+  // ── Fetch raw for consolidation ──────────────────────────────────────────
+  // Returns sorted by keep_score descending so consolidation processes
+  // most valuable memories first.
+
+  async fetchRaw(limit = 60): Promise<Array<{ id: string; text: string; surprise: number; recallCount: number }>> {
     try {
       const result = await this.client.scroll(COLLECTION, {
         limit,
         with_payload: true,
-        with_vector: false,
-        filter: {
-          must: [{ key: 'status', match: { value: 'raw' } }],
-        },
+        with_vector:  false,
+        filter: { must: [{ key: 'status', match: { value: 'raw' } }] },
       });
-      return result.points.map((p) => ({
-        id:   String(p.id),
-        text: String((p.payload as Record<string, unknown>)?.['text'] ?? ''),
-      })).filter((p) => p.text.length > 0);
+      return result.points
+        .map((p) => {
+          const pay = p.payload as Record<string, unknown>;
+          return {
+            id:          String(p.id),
+            text:        String(pay?.['text'] ?? ''),
+            surprise:    Number(pay?.['surprise'] ?? 0.5),
+            recallCount: Number(pay?.['recall_count'] ?? 0),
+          };
+        })
+        .filter((p) => p.text.length > 0)
+        .sort((a, b) => this.keepScore(b) - this.keepScore(a)); // best first
     } catch {
       return [];
     }
   }
 
-  // ── Project (UMAP 768d → 3d) ─────────────────────────────────────────────
+  // ── Fetch fading memories (long unused raw points) ───────────────────────
+
+  async fetchFading(): Promise<Array<{ id: string; text: string; surprise: number; recallCount: number }>> {
+    try {
+      const fadingCutoff = Date.now() - FADING_THRESHOLD_MS;
+      const result = await this.client.scroll(COLLECTION, {
+        limit: 200,
+        with_payload: true,
+        with_vector:  false,
+        filter: {
+          must: [{ key: 'status', match: { value: 'raw' } }],
+        },
+      });
+      return result.points
+        .map((p) => {
+          const pay = p.payload as Record<string, unknown>;
+          return {
+            id:           String(p.id),
+            text:         String(pay?.['text'] ?? ''),
+            surprise:     Number(pay?.['surprise'] ?? 0.5),
+            recallCount:  Number(pay?.['recall_count'] ?? 0),
+            lastRecalled: Number(pay?.['last_recalled'] ?? 0),
+            timestamp:    Number(pay?.['timestamp'] ?? 0),
+          };
+        })
+        .filter((p) => {
+          if (p.text.length === 0) return false;
+          const lastActivity = Math.max(p.lastRecalled, p.timestamp);
+          return lastActivity < fadingCutoff && p.recallCount === 0;
+        });
+    } catch {
+      return [];
+    }
+  }
+
+  // ── Keep score (Titans-inspired) ─────────────────────────────────────────
+  // surprise × 0.5 + recall_weight × 0.5
+  // Used to decide what to consolidate vs drop.
+
+  keepScore(p: { surprise: number; recallCount: number }): number {
+    const recallWeight = Math.min(1, p.recallCount / 5); // saturates at 5 recalls
+    return p.surprise * 0.5 + recallWeight * 0.5;
+  }
+
+  // ── Recall ────────────────────────────────────────────────────────────────
+  // Increments recall_count for matched points (use-it-or-lose-it).
+
+  async recall(query: string, topK = 5): Promise<string[]> {
+    let vector: number[];
+    try {
+      vector = await this.embed(query);
+    } catch {
+      return [];
+    }
+
+    let results: Array<{ id: string | number; score: number; payload?: Record<string, unknown> | null }>;
+    try {
+      results = await this.client.search(COLLECTION, {
+        vector,
+        limit: topK,
+        with_payload: true,
+        score_threshold: 0.4, // lowered from 0.5 for better coverage
+      });
+    } catch {
+      return [];
+    }
+
+    if (results.length === 0) return [];
+
+    // Fire-and-forget: increment recall_count + update last_recalled
+    const now = Date.now();
+    Promise.all(
+      results.map((r) => {
+        const pay = r.payload as Record<string, unknown> | null ?? {};
+        const prevCount = Number(pay?.['recall_count'] ?? 0);
+        return this.client.setPayload(COLLECTION, {
+          points: [String(r.id)],
+          payload: {
+            recall_count:  prevCount + 1,
+            last_recalled: now,
+          },
+        }).catch(() => {});
+      }),
+    ).catch(() => {});
+
+    return results
+      .map((r) => String((r.payload as Record<string, unknown> | null | undefined)?.['text'] ?? ''))
+      .filter((t) => t.length > 0);
+  }
+
+  // ── Project (UMAP 768d → 3d) ──────────────────────────────────────────────
 
   async project(limit = 300): Promise<MemoryPoint[]> {
     let points: Array<{ id: string; vector?: number[] | Record<string, number[]>; payload?: Record<string, unknown> }>;
     try {
       const result = await this.client.scroll(COLLECTION, {
         limit,
-        with_vector: true,
+        with_vector:  true,
         with_payload: true,
       });
       points = result.points as typeof points;
@@ -160,31 +307,26 @@ export class NovaMemoryService implements OnModuleInit {
 
     if (points.length === 0) return [];
 
-    // Extract raw vectors (Qdrant may return named vectors; handle both)
     const vectors: number[][] = points.map((p) => {
       const v = p.vector;
       if (Array.isArray(v)) return v as number[];
-      // named vector map — take first value
       if (v && typeof v === 'object') return Object.values(v)[0] as number[];
       return new Array(VECTOR_SIZE).fill(0) as number[];
     });
 
     let coords: number[][];
     if (vectors.length < 4) {
-      // UMAP needs ≥ 4 points; just place them linearly
       coords = vectors.map((_, i) => [i * 0.5, 0, 0]);
     } else {
       const umap = new UMAP({
         nComponents: 3,
-        nNeighbors: Math.min(15, vectors.length - 1),
-        minDist: 0.1,
-        // Fixed seed so projections are stable across polls
+        nNeighbors:  Math.min(15, vectors.length - 1),
+        minDist:     0.1,
         random: (() => { let s = 42; return () => { s = (s * 1664525 + 1013904223) & 0xffffffff; return (s >>> 0) / 0xffffffff; }; })(),
       });
       coords = await umap.fitAsync(vectors);
     }
 
-    // Normalize coords to [-3, 3] range
     const xs = coords.map((c) => c[0]);
     const ys = coords.map((c) => c[1]);
     const zs = coords.map((c) => c[2]);
@@ -194,43 +336,25 @@ export class NovaMemoryService implements OnModuleInit {
     const [yMin, yMax] = [Math.min(...ys), Math.max(...ys)];
     const [zMin, zMax] = [Math.min(...zs), Math.max(...zs)];
 
-    return points.map((p, i) => ({
-      id:        String(p.id),
-      text:      String(p.payload?.['text'] ?? ''),
-      type:      (p.payload?.['type'] as 'main' | 'association' | 'voice') ?? 'main',
-      status:    (p.payload?.['status'] as 'raw' | 'consolidated') ?? 'raw',
-      timestamp: Number(p.payload?.['timestamp'] ?? 0),
-      x:         norm(coords[i][0], xMin, xMax),
-      y:         norm(coords[i][1], yMin, yMax),
-      z:         norm(coords[i][2], zMin, zMax),
-    }));
+    return points.map((p, i) => {
+      const pay = p.payload ?? {};
+      return {
+        id:          String(p.id),
+        text:        String(pay['text'] ?? ''),
+        type:        (pay['type'] as MemoryPoint['type']) ?? 'main',
+        status:      (pay['status'] as MemoryPoint['status']) ?? 'raw',
+        surprise:    Number(pay['surprise'] ?? 0.5),
+        recallCount: Number(pay['recall_count'] ?? 0),
+        timestamp:   Number(pay['timestamp'] ?? 0),
+        lastRecalled:Number(pay['last_recalled'] ?? 0),
+        x:           norm(coords[i][0], xMin, xMax),
+        y:           norm(coords[i][1], yMin, yMax),
+        z:           norm(coords[i][2], zMin, zMax),
+      };
+    });
   }
 
-  // ── Recall: text snippets for context injection ──────────────────────────
-
-  async recall(query: string, topK = 5): Promise<string[]> {
-    let vector: number[];
-    try {
-      vector = await this.embed(query);
-    } catch {
-      return [];
-    }
-    try {
-      const results = await this.client.search(COLLECTION, {
-        vector,
-        limit: topK,
-        with_payload: true,
-        score_threshold: 0.5,
-      });
-      return results
-        .map((r) => String((r.payload as Record<string, unknown> | null | undefined)?.['text'] ?? ''))
-        .filter((t) => t.length > 0);
-    } catch {
-      return [];
-    }
-  }
-
-  // ── Nearest neighbors (for query highlight) ─────────────────────────────
+  // ── Search (for highlight + query context) ────────────────────────────────
 
   async search(query: string, topK = 10): Promise<MemoryPoint[]> {
     let vector: number[];
@@ -252,7 +376,6 @@ export class NovaMemoryService implements OnModuleInit {
       return [];
     }
 
-    // Get the full projected positions so we can return xyz
     const allPoints = await this.project();
     const byId = new Map(allPoints.map((p) => [p.id, p]));
 

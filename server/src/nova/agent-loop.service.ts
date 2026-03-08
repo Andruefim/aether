@@ -110,6 +110,15 @@ Eliminate redundancy. Keep only the most important and novel information.
 Reply ONLY with a JSON array of strings:
 ["Consolidated fact 1.", "Consolidated fact 2."]`;
 
+// LLM judge: evaluates a single fact before storing it
+// Returns score 0–10 and brief reason. Facts scoring < 4 are dropped.
+const JUDGE_SYSTEM = `You are Nova's memory gatekeeper.
+Evaluate whether the following fact is worth storing in long-term memory.
+Consider: scientific significance, novelty, relevance to aging/longevity research, and factual clarity.
+Reply ONLY with a JSON object (no markdown):
+{ "score": <0-10>, "reason": "<one short phrase>" }
+Score guide: 0-3 = trivial/irrelevant, 4-6 = useful but not critical, 7-10 = highly significant.`;
+
 // ─── Service ──────────────────────────────────────────────────────────────────
 @Injectable()
 export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
@@ -297,7 +306,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
         return 0.2;
 
       case 'reflect':
-        return await this.doReflect(memories);
+        return await this.doReflect(memories, goalContext);
 
       case 'hypothesize':
         return await this.doHypothesize(memories, goalContext);
@@ -357,18 +366,36 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     let stored = 0;
     for (const fact of facts.slice(0, 3)) {
       if (fact.trim().length < 10) continue;
-      await this.memory.store(fact, 'main', 'raw');
-      this.bus.emit({ phase: 'store', text: fact, ts: Date.now() });
-      stored++;
+
+      // ── LLM judge: evaluate before storing ─────────────────────────────────
+      const { score, reason } = await this.judgeValue(fact, goalContext);
+      if (score < 4) {
+        this.bus.emit({
+          phase: 'act',
+          text:  `Rejected (score ${score}/10 — ${reason}): "${fact.slice(0, 50)}"`,
+          ts:    Date.now(),
+        });
+        this.state.curiosity = Math.max(0, this.state.curiosity - 0.02);
+        continue;
+      }
+
+      const result = await this.memory.store(fact, 'main', 'raw');
+      if (result === 'duplicate') {
+        this.bus.emit({ phase: 'act', text: `Skipped duplicate: "${fact.slice(0, 60)}"`, ts: Date.now() });
+        this.state.curiosity = Math.max(0, this.state.curiosity - 0.03);
+      } else if (result !== 'skipped') {
+        this.bus.emit({ phase: 'store', text: `[${score}/10] ${fact}`, ts: Date.now() });
+        stored++;
+      }
     }
 
-    this.state.curiosity = Math.min(1, this.state.curiosity + stored * 0.08);
+    this.state.curiosity = Math.min(1, this.state.curiosity + stored * 0.1);
     this.state.energy    = Math.max(0, this.state.energy - 0.04);
     return stored > 0 ? 0.6 : 0.3;
   }
 
   // ── reflect ───────────────────────────────────────────────────────────────
-  private async doReflect(memories: string[]): Promise<number> {
+  private async doReflect(memories: string[], goalContext: string): Promise<number> {
     this.bus.emit({ phase: 'act', text: 'Reflecting on accumulated knowledge...', tool: 'reflect', ts: Date.now() });
     if (memories.length < 2) {
       this.bus.emit({ phase: 'act', text: 'Not enough memories to reflect on yet.', ts: Date.now() });
@@ -391,8 +418,13 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
 
     for (const insight of insights.slice(0, 2)) {
       if (insight.trim().length < 10) continue;
+      const { score, reason } = await this.judgeValue(insight, goalContext);
+      if (score < 4) {
+        this.bus.emit({ phase: 'act', text: `Insight rejected (${score}/10 — ${reason})`, ts: Date.now() });
+        continue;
+      }
       await this.memory.store(`[insight] ${insight}`, 'main', 'raw');
-      this.bus.emit({ phase: 'store', text: insight, ts: Date.now() });
+      this.bus.emit({ phase: 'store', text: `[insight ${score}/10] ${insight}`, ts: Date.now() });
     }
 
     this.state.mood = 'reflective';
@@ -424,12 +456,17 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
 
     for (const h of hypotheses.slice(0, 2)) {
       if (h.trim().length < 10) continue;
+      const { score, reason } = await this.judgeValue(h, goalContext);
+      if (score < 3) {
+        // Hypotheses get a lower bar (3 vs 4) — speculative ideas are allowed
+        this.bus.emit({ phase: 'act', text: `Hypothesis rejected (${score}/10 — ${reason})`, ts: Date.now() });
+        continue;
+      }
       await this.memory.store(h, 'main', 'raw');
-      // Add to open questions if starts with "Question:"
       if (h.toLowerCase().startsWith('question:')) {
         this.state.openQuestions = [h, ...this.state.openQuestions].slice(0, 10);
       }
-      this.bus.emit({ phase: 'store', text: h, data: { subtype: 'hypothesis' }, ts: Date.now() });
+      this.bus.emit({ phase: 'store', text: `[hypothesis ${score}/10] ${h}`, data: { subtype: 'hypothesis' }, ts: Date.now() });
     }
 
     this.state.curiosity = Math.min(1, this.state.curiosity + 0.12);
@@ -523,9 +560,36 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       ts:    Date.now(),
     });
 
+    // ── Step 1: Remove fading memories (unused for 7+ days, recall_count=0) ─
+    const fadingPoints = await this.memory.fetchFading();
+    if (fadingPoints.length > 0) {
+      await this.memory.deleteMany(fadingPoints.map((p) => p.id));
+      this.bus.emit({
+        phase: 'sleep',
+        text:  `Pruned ${fadingPoints.length} fading memories (unused, low value)`,
+        ts:    Date.now(),
+      });
+    }
+
+    // ── Step 2: Split raw into HIGH-value (consolidate) and LOW-value (drop) ─
     const rawPoints = await this.memory.fetchRaw(60);
-    if (rawPoints.length > 0) {
-      for (const chunk of this.chunk(rawPoints, 10)) {
+    const KEEP_THRESHOLD = 0.25; // keep_score below this → drop without consolidating
+
+    const toConsolidate = rawPoints.filter((p) => this.memory.keepScore(p) >= KEEP_THRESHOLD);
+    const toDrop        = rawPoints.filter((p) => this.memory.keepScore(p) <  KEEP_THRESHOLD);
+
+    if (toDrop.length > 0) {
+      await this.memory.deleteMany(toDrop.map((p) => p.id));
+      this.bus.emit({
+        phase: 'sleep',
+        text:  `Dropped ${toDrop.length} low-value memories (surprise too low, never recalled)`,
+        ts:    Date.now(),
+      });
+    }
+
+    // ── Step 3: Consolidate high-value memories via LLM ──────────────────────
+    if (toConsolidate.length > 0) {
+      for (const chunk of this.chunk(toConsolidate, 10)) {
         const content = chunk.map((p, i) => `${i + 1}. ${p.text}`).join('\n');
         const msgs: OllamaMessage[] = [
           { role: 'system', content: CONSOLIDATE_SYSTEM },
@@ -558,13 +622,33 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
 
     await new Promise<void>((r) => setTimeout(r, CONSOLIDATION_MS));
 
-    // Restore energy and mood after sleep
     this.state.energy    = Math.min(1, this.state.energy + 0.6);
     this.state.curiosity = Math.min(1, this.state.curiosity + 0.2);
     this.state.mood      = 'curious';
 
     this.summary.invalidate();
     this.bus.emit({ phase: 'wake', text: 'Consolidation complete. Energy restored. Ready to explore.', ts: Date.now() });
+  }
+
+  // ── LLM Judge ─────────────────────────────────────────────────────────────
+  // Returns score 0–10. < 4 = not worth storing.
+  // Uses fast model to keep latency low. Falls back to 7 on parse error.
+
+  private async judgeValue(text: string, goalContext: string): Promise<{ score: number; reason: string }> {
+    const msgs: OllamaMessage[] = [
+      { role: 'system', content: JUDGE_SYSTEM },
+      { role: 'user',   content: `Research goal: ${goalContext}\n\nFact to evaluate: "${text}"` },
+    ];
+    try {
+      const resp  = await this.ollama.chat(msgs, undefined, this.fastModel, 'json');
+      const raw   = resp.content?.trim() ?? '{}';
+      const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      const parsed = JSON.parse(clean) as { score?: number; reason?: string };
+      const score = Math.min(10, Math.max(0, Number(parsed.score ?? 7)));
+      return { score, reason: String(parsed.reason ?? '') };
+    } catch {
+      return { score: 7, reason: 'parse error — defaulting to keep' };
+    }
   }
 
   private chunk<T>(arr: T[], size: number): T[][] {
