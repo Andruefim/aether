@@ -25,6 +25,19 @@ export interface AetherMessage {
 
 export type AppMode = 'desktop' | 'aether' | 'nova' | 'space';
 
+// ── GoalSummary (shared between Nova and Nova Space) ──────────────────────────
+export interface GoalSummary {
+  goalId:      string;
+  goalText:    string;
+  title:       string;
+  bullets:     string[];
+  insight:     string;
+  progress:    number;
+  memoryCount: number;
+  avgSurprise: number;
+  generatedAt: number;
+}
+
 interface AetherStore {
   // ── App mode ──────────────────────────────────────────────────────────────
   appMode: AppMode;
@@ -76,6 +89,15 @@ interface AetherStore {
   triggerAetherPulse: () => void;
   setAetherLastAction: (action: 'generate_ui' | 'dialogue' | 'tool' | null) => void;
   revertAetherHtml: () => void;
+
+  // ── Nova shared (persists across tab switches) ────────────────────────────
+  goalSummaries:        GoalSummary[];
+  goalSummariesTs:      number;       // timestamp of last successful fetch
+  goalSummariesLoading: boolean;
+  setGoalSummaries:     (s: GoalSummary[]) => void;
+  setGoalSummariesLoading: (v: boolean) => void;
+  wakeSignal:           number;
+  triggerWake:          () => void;
 }
 
 export const useAetherStore = create<AetherStore>((set) => ({
@@ -140,4 +162,13 @@ export const useAetherStore = create<AetherStore>((set) => ({
     aetherHtml: state.aetherPreviousHtml,
     aetherStatus: null,
   })),
+
+  // ── Nova shared ───────────────────────────────────────────────────────────
+  goalSummaries:           [],
+  goalSummariesTs:         0,
+  goalSummariesLoading:    false,
+  setGoalSummaries:        (s) => set({ goalSummaries: s, goalSummariesTs: Date.now(), goalSummariesLoading: false }),
+  setGoalSummariesLoading: (v) => set({ goalSummariesLoading: v }),
+  wakeSignal:              0,
+  triggerWake:             () => set((state) => ({ wakeSignal: state.wakeSignal + 1 })),
 }));

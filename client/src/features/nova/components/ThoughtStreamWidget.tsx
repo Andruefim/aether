@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 export type ThoughtPhase = 'observe' | 'orient' | 'plan' | 'act' | 'store' | 'sleep' | 'wake' | 'question' | 'error';
 
@@ -56,9 +56,14 @@ interface Props {
   onAnswer: (answer: string) => void;
   /** Called when Nova wakes from sleep — parent refreshes summary */
   onWake?: () => void;
+  /**
+   * When true, renders as a full-height inline flex panel (no fixed positioning,
+   * no collapse button). Use inside Nova Space column layout.
+   */
+  embedded?: boolean;
 }
 
-export function ThoughtStreamWidget({ onAnswer, onWake }: Props) {
+export function ThoughtStreamWidget({ onAnswer, onWake, embedded = false }: Props) {
   const [events, setEvents]         = useState<ThoughtEvent[]>([]);
   const [sleeping, setSleeping]     = useState(false);
   const [question, setQuestion]     = useState<string | null>(null);
@@ -128,39 +133,47 @@ export function ThoughtStreamWidget({ onAnswer, onWake }: Props) {
     setQuestion(null);
   };
 
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        bottom: 80,
-        right: 20,
-        width: collapsed ? 44 : 320,
-        maxHeight: collapsed ? 44 : 380,
-        background: 'rgba(8,5,20,0.82)',
-        border: '1px solid rgba(139,92,246,0.35)',
-        borderRadius: 14,
-        backdropFilter: 'blur(14px)',
-        boxShadow: '0 8px 32px rgba(139,92,246,0.18)',
-        zIndex: 500,
-        display: 'flex',
+  const containerStyle: React.CSSProperties = embedded
+    ? {
+        display:       'flex',
         flexDirection: 'column',
-        overflow: 'hidden',
-        transition: 'width 0.25s ease, max-height 0.25s ease',
-        fontFamily: '"Inter", "Segoe UI", sans-serif',
-      }}
-    >
+        height:        '100%',
+        overflow:      'hidden',
+        fontFamily:    '"Inter", "Segoe UI", sans-serif',
+      }
+    : {
+        position:       'fixed',
+        bottom:         80,
+        right:          20,
+        width:          collapsed ? 44 : 320,
+        maxHeight:      collapsed ? 44 : 380,
+        background:     'rgba(8,5,20,0.82)',
+        border:         '1px solid rgba(139,92,246,0.35)',
+        borderRadius:   14,
+        backdropFilter: 'blur(14px)',
+        boxShadow:      '0 8px 32px rgba(139,92,246,0.18)',
+        zIndex:         500,
+        display:        'flex',
+        flexDirection:  'column',
+        overflow:       'hidden',
+        transition:     'width 0.25s ease, max-height 0.25s ease',
+        fontFamily:     '"Inter", "Segoe UI", sans-serif',
+      };
+
+  return (
+    <div style={containerStyle}>
       {/* Header */}
       <div
-        onClick={() => setCollapsed((c) => !c)}
+        onClick={() => !embedded && setCollapsed((c) => !c)}
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 12px',
-          cursor: 'pointer',
-          userSelect: 'none',
-          borderBottom: collapsed ? 'none' : '1px solid rgba(139,92,246,0.2)',
-          flexShrink: 0,
+          display:      'flex',
+          alignItems:   'center',
+          gap:          8,
+          padding:      '8px 12px',
+          cursor:       embedded ? 'default' : 'pointer',
+          userSelect:   'none',
+          borderBottom: '1px solid rgba(139,92,246,0.2)',
+          flexShrink:   0,
         }}
       >
         {/* Status dot */}
@@ -174,19 +187,21 @@ export function ThoughtStreamWidget({ onAnswer, onWake }: Props) {
             animation: sleeping ? 'pulse 2s ease-in-out infinite' : 'none',
           }}
         />
-        {!collapsed && (
+        {(embedded || !collapsed) && (
           <>
             <span style={{ color: '#c4b5fd', fontSize: 12, fontWeight: 600, flex: 1 }}>
               {sleeping ? 'Nova · sleeping' : 'Nova · thinking'}
             </span>
-            <span style={{ color: '#6b7280', fontSize: 10 }}>
-              {collapsed ? '▲' : '▼'}
-            </span>
+            {!embedded && (
+              <span style={{ color: '#6b7280', fontSize: 10 }}>
+                {collapsed ? '▲' : '▼'}
+              </span>
+            )}
           </>
         )}
       </div>
 
-      {!collapsed && (
+      {(embedded || !collapsed) && (
         <>
           {/* Events list */}
           <div

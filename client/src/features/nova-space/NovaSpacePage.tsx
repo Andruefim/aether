@@ -1,104 +1,25 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { LabScene } from './LabScene';
 import { ExperimentLog } from './ExperimentLog';
 import { ExperimentEvent, ExperimentResult } from './types';
-
-// ─── Inline ThoughtStream (panel version — no fixed positioning) ──────────────
-
-type ThoughtPhase = 'observe' | 'orient' | 'plan' | 'act' | 'store' | 'sleep' | 'wake' | 'question' | 'error';
-interface ThoughtEvent { phase: ThoughtPhase; text: string; tool?: string; data?: Record<string, unknown>; ts: number; }
-
-const THOUGHT_ICON: Record<string, string> = {
-  observe: '👁', orient: '🧭', plan: '🧠', act: '⚡',
-  store: '💾', sleep: '💤', wake: '🌅', question: '❓', error: '✗',
-};
-const THOUGHT_COLOR: Record<string, string> = {
-  observe: '#60a5fa', orient: '#a78bfa', plan: '#c084fc', act: '#34d399',
-  store: '#fbbf24', sleep: '#6b7280', wake: '#86efac', question: '#f59e0b', error: '#f87171',
-};
-
-function ThoughtStreamPanel({ onWake }: { onWake?: () => void }) {
-  const [evts, setEvts] = useState<ThoughtEvent[]>([]);
-  const [question, setQ] = useState<string | null>(null);
-  const [answer, setA]  = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  const push = useCallback((e: ThoughtEvent) => {
-    setEvts((prev) => [...prev.slice(-199), e]);
-    if (e.phase === 'wake') onWake?.();
-    if (e.phase === 'question' && typeof e.text === 'string' && !e.data?.['type']) setQ(e.text);
-  }, [onWake]);
-
-  useEffect(() => {
-    const es = new EventSource('/api/nova/thoughts');
-    es.onmessage = (e) => {
-      try { push(JSON.parse(e.data as string) as ThoughtEvent); } catch { /**/ }
-    };
-    return () => es.close();
-  }, [push]);
-
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [evts.length]);
-
-  const submitAnswer = useCallback(() => {
-    if (!answer.trim()) return;
-    fetch('/api/nova/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answer }) }).catch(() => {});
-    setQ(null); setA('');
-  }, [answer]);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(167,139,250,0.2)', flexShrink: 0 }}>
-        <span style={{ color: '#c084fc', fontSize: 12, fontWeight: 700, letterSpacing: '0.05em' }}>NOVA THINKING</span>
-      </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
-        {evts.map((e, i) => (
-          <div key={i} style={{ display: 'flex', gap: 7, padding: '3px 14px', alignItems: 'flex-start' }}>
-            <span style={{ fontSize: 11, flexShrink: 0, marginTop: 1 }}>{THOUGHT_ICON[e.phase] ?? '·'}</span>
-            <span style={{ fontSize: 10, color: THOUGHT_COLOR[e.phase] ?? '#9ca3af', lineHeight: 1.5 }}>
-              {e.text}
-              {e.tool && <span style={{ color: '#4b5563', marginLeft: 5 }}>[{e.tool}]</span>}
-            </span>
-          </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
-      {question && (
-        <div style={{ borderTop: '1px solid rgba(167,139,250,0.2)', padding: '8px 10px', flexShrink: 0 }}>
-          <div style={{ fontSize: 10, color: '#f59e0b', marginBottom: 5 }}>❓ {question}</div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              value={answer}
-              onChange={(e) => setA(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submitAnswer()}
-              placeholder="Your answer…"
-              style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(167,139,250,0.25)', borderRadius: 6, padding: '4px 8px', color: '#f3f4f6', fontSize: 11, outline: 'none' }}
-            />
-            <button onClick={submitAnswer} style={{ background: 'rgba(167,139,250,0.2)', border: '1px solid rgba(167,139,250,0.35)', borderRadius: 6, padding: '4px 10px', color: '#c084fc', fontSize: 11, cursor: 'pointer' }}>
-              Send
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+import { ThoughtStreamWidget } from '../nova/components/ThoughtStreamWidget';
+import { useAetherStore } from '../../core';
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 const MAX_EVENTS = 120;
 
 export function NovaSpacePage() {
-  const [events, setEvents]     = useState<ExperimentEvent[]>([]);
-  const [results, setResults]   = useState<ExperimentResult[]>([]);
-  const [selected, setSelected] = useState<ExperimentResult | null>(null);
-  const [running, setRunning]   = useState(false);
-  const [wakeSignal, setWakeSignal] = useState(0);
+  const triggerWake = useAetherStore((s) => s.triggerWake);
 
-  // Subscribe to experiment SSE
+  const [events,   setEvents]   = useState<ExperimentEvent[]>([]);
+  const [results,  setResults]  = useState<ExperimentResult[]>([]);
+  const [selected, setSelected] = useState<ExperimentResult | null>(null);
+  const [running,  setRunning]  = useState(false);
+
   useEffect(() => {
     const es = new EventSource('/api/experiment/events');
-
     es.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data as string) as ExperimentEvent;
@@ -112,7 +33,6 @@ export function NovaSpacePage() {
       } catch { /* skip */ }
     };
 
-    // Load past results
     fetch('/api/experiment/results?limit=20')
       .then((r) => r.json())
       .then((data: unknown) => {
@@ -140,8 +60,6 @@ export function NovaSpacePage() {
       setRunning(false);
     }
   }, [running]);
-
-  void wakeSignal; // consumed by ThoughtStreamPanel via onWake
 
   return (
     <div
@@ -229,7 +147,17 @@ export function NovaSpacePage() {
 
       {/* ── Col 2: Nova Thinking ── */}
       <div style={{ borderRight: '1px solid rgba(167,139,250,0.12)', overflow: 'hidden' }}>
-        <ThoughtStreamPanel onWake={() => setWakeSignal((n) => n + 1)} />
+        <ThoughtStreamWidget
+          embedded
+          onAnswer={(ans) => {
+            fetch('/api/nova/answer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ answer: ans }),
+            }).catch(() => {});
+          }}
+          onWake={triggerWake}
+        />
       </div>
 
       {/* ── Col 3: Experiment Log ── */}

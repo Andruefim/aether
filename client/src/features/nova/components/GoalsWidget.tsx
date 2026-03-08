@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useAetherStore } from '../../../core';
 
 interface NovaGoal {
   id: string;
@@ -6,12 +7,6 @@ interface NovaGoal {
   priority: number;
   active: boolean;
   createdAt: string;
-}
-
-interface GoalSummary {
-  goalId: string;
-  progress: number;
-  memoryCount: number;
 }
 
 async function api<T>(path: string, opts?: RequestInit): Promise<T> {
@@ -40,12 +35,15 @@ function MiniProgressBar({ value, active }: { value: number; active: boolean }) 
 }
 
 export function GoalsWidget() {
-  const [goals, setGoals]           = useState<NovaGoal[]>([]);
-  const [progresses, setProgresses] = useState<Map<string, GoalSummary>>(new Map());
-  const [collapsed, setCollapsed]   = useState(false);
-  const [inputText, setInputText]   = useState('');
-  const [loading, setLoading]       = useState(false);
+  const goalSummaries = useAetherStore((s) => s.goalSummaries);
+  const [goals, setGoals]         = useState<NovaGoal[]>([]);
+  const [collapsed, setCollapsed] = useState(false);
+  const [inputText, setInputText] = useState('');
+  const [loading, setLoading]     = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Build a lookup map from the shared store
+  const progresses = new Map(goalSummaries.map((s) => [s.goalId, s]));
 
   const load = useCallback(async () => {
     try {
@@ -54,22 +52,9 @@ export function GoalsWidget() {
     } catch { /* server not ready */ }
   }, []);
 
-  const loadProgresses = useCallback(async () => {
-    try {
-      const data = await api<GoalSummary[]>('/api/nova/summary/goals');
-      const map = new Map<string, GoalSummary>();
-      for (const s of data) map.set(s.goalId, s);
-      setProgresses(map);
-    } catch { /* noop — summary may not be ready */ }
-  }, []);
-
   useEffect(() => {
     load();
-    loadProgresses();
-    // Refresh progresses periodically
-    const interval = setInterval(loadProgresses, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [load, loadProgresses]);
+  }, [load]);
 
   const add = async () => {
     const text = inputText.trim();

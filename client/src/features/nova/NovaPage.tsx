@@ -44,14 +44,13 @@ async function fetchHighlightIds(query: string): Promise<Set<string>> {
 
 export function NovaPage() {
   const aetherIsGenerating = useAetherStore((s) => s.aetherIsGenerating);
+  const triggerWake        = useAetherStore((s) => s.triggerWake);
 
   // Shared mutable bucket — TokenGlyphSystem reads .current every RAF
   const tokenBucketRef  = useRef<IncomingToken[]>([]);
   const staggerCancel   = useRef<(() => void) | null>(null);
 
   const [tooltip, setTooltip] = useState<TooltipState>({ text: '', x: 0, y: 0, visible: false });
-  // Bumped every time Nova wakes from sleep — triggers summary refresh
-  const [wakeSignal, setWakeSignal] = useState(0);
 
   // When set to a non-empty string, triggers the "settle" animation in TokenGlyphSystem
   const settleSignalRef = useRef<string>('');
@@ -120,11 +119,11 @@ export function NovaPage() {
             body: JSON.stringify({ answer: ans }),
           }).catch(() => {});
         }}
-        onWake={() => setWakeSignal((n) => n + 1)}
+        onWake={triggerWake}
       />
 
       {/* Right: research summary */}
-      <ResearchSummaryWidget wakeSignal={wakeSignal} />
+      <ResearchSummaryWidget />
 
       <AetherInputBar
         onSubmit={handleSubmit}
