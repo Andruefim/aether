@@ -121,7 +121,10 @@ export class NovaMemoryService implements OnModuleInit {
     // Compute surprise before storing
     const surprise = await this.computeSurprise(vector);
 
-    if (surprise < MIN_SURPRISE) {
+    // Skip duplicate check for consolidated memories — their originals were
+    // just deleted, so remaining memories may look similar but the consolidated
+    // version is the intended replacement and must not be rejected.
+    if (status !== 'consolidated' && surprise < MIN_SURPRISE) {
       this.logger.debug(`[store] Skipped near-duplicate (surprise=${surprise.toFixed(3)}): "${trimmed.slice(0, 60)}"`);
       return 'duplicate';
     }
@@ -175,7 +178,7 @@ export class NovaMemoryService implements OnModuleInit {
   // Returns sorted by keep_score descending so consolidation processes
   // most valuable memories first.
 
-  async fetchRaw(limit = 60): Promise<Array<{ id: string; text: string; surprise: number; recallCount: number }>> {
+  async fetchRaw(limit = 60): Promise<Array<{ id: string; text: string; surprise: number; recallCount: number; timestamp: number }>> {
     try {
       const result = await this.client.scroll(COLLECTION, {
         limit,
@@ -191,6 +194,7 @@ export class NovaMemoryService implements OnModuleInit {
             text:        String(pay?.['text'] ?? ''),
             surprise:    Number(pay?.['surprise'] ?? 0.5),
             recallCount: Number(pay?.['recall_count'] ?? 0),
+            timestamp:   Number(pay?.['timestamp'] ?? 0),
           };
         })
         .filter((p) => p.text.length > 0)
@@ -236,12 +240,17 @@ export class NovaMemoryService implements OnModuleInit {
   }
 
   // ── Keep score (Titans-inspired) ─────────────────────────────────────────
-  // surprise × 0.5 + recall_weight × 0.5
-  // Used to decide what to consolidate vs drop.
+  // surprise × 0.4 + recall_weight × 0.4 + recency × 0.2
+  // Recency gives new memories a grace period before they can be pruned.
+  // Without it, freshly stored memories with low surprise and zero recalls
+  // are immediately dropped during consolidation before ever being recalled.
 
-  keepScore(p: { surprise: number; recallCount: number }): number {
-    const recallWeight = Math.min(1, p.recallCount / 5); // saturates at 5 recalls
-    return p.surprise * 0.5 + recallWeight * 0.5;
+  keepScore(p: { surprise: number; recallCount: number; timestamp?: number }): number {
+    const recallWeight = Math.min(1, p.recallCount / 5);
+    const ageMs = p.timestamp ? Date.now() - p.timestamp : Infinity;
+    const GRACE_PERIOD_MS = 60 * 60 * 1000; // 1 hour
+    const recency = ageMs < GRACE_PERIOD_MS ? 1 - ageMs / GRACE_PERIOD_MS : 0;
+    return p.surprise * 0.4 + recallWeight * 0.4 + recency * 0.2;
   }
 
   // ── Recall ────────────────────────────────────────────────────────────────
