@@ -96,7 +96,8 @@ export class AgentMemoryService {
         }
 
         await this.memory.deleteMany(chunk.map((p) => p.id));
-        for (const text of consolidated) {
+        for (const raw of consolidated) {
+          const text = typeof raw === 'string' ? raw : String(raw ?? '');
           if (text.trim().length > 10) await this.memory.store(text, 'main', 'consolidated');
         }
 

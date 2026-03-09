@@ -77,6 +77,7 @@ export class AgentActionsService {
     }
 
     // Fallback: if synthesize returned nothing usable, use raw search titles
+    facts = facts.map((f) => typeof f === 'string' ? f : String(f ?? '')).filter(Boolean);
     if (facts.filter((f) => f.trim().length >= 10).length === 0) {
       facts = results.map((r) => r.title).filter((t) => t && t.length >= 10);
       if (facts.length > 0) {
@@ -135,6 +136,7 @@ export class AgentActionsService {
       insights = parseJson<string[]>(resp.content?.trim() ?? '[]', []);
       if (!Array.isArray(insights)) insights = [];
     } catch { insights = []; }
+    insights = insights.map((s) => typeof s === 'string' ? s : String(s ?? '')).filter(Boolean);
 
     for (const insight of insights.slice(0, 2)) {
       if (insight.trim().length < 10) continue;
@@ -178,6 +180,7 @@ export class AgentActionsService {
       hypotheses = parseJson<string[]>(resp.content?.trim() ?? '[]', []);
       if (!Array.isArray(hypotheses)) hypotheses = [];
     } catch { hypotheses = []; }
+    hypotheses = hypotheses.map((s) => typeof s === 'string' ? s : String(s ?? '')).filter(Boolean);
 
     for (const h of hypotheses.slice(0, 2)) {
       if (h.trim().length < 10) continue;
