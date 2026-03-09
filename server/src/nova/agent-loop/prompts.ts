@@ -162,11 +162,23 @@ Reply ONLY with a JSON object (no markdown):
 { "score": <0-10>, "reason": "<one short phrase>" }
 Score guide: 0-3 = trivial/irrelevant, 4-6 = useful but not critical, 7-10 = highly significant.`;
 
-/** Strip markdown code fences and parse JSON safely */
+/** Strip markdown code fences and parse JSON safely.
+ *  When fallback is an array, automatically unwraps {"key": [...]} responses
+ *  that smaller models produce instead of bare arrays. */
 export function parseJson<T>(raw: string, fallback: T): T {
   try {
     const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    return JSON.parse(clean) as T;
+    let parsed = JSON.parse(clean);
+
+    // Models often wrap arrays in an object: {"facts": [...]} or {"results": [...]}
+    // If we expect an array (fallback is array) but got an object, extract the first array value.
+    if (Array.isArray(fallback) && !Array.isArray(parsed) && parsed && typeof parsed === 'object') {
+      const values = Object.values(parsed);
+      const arr = values.find((v) => Array.isArray(v));
+      if (arr) parsed = arr;
+    }
+
+    return parsed as T;
   } catch {
     return fallback;
   }

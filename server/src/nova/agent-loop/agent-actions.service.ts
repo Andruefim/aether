@@ -73,7 +73,15 @@ export class AgentActionsService {
       facts = parseJson<string[]>(resp.content?.trim() ?? '[]', []);
       if (!Array.isArray(facts)) facts = [];
     } catch {
-      facts = results.map((r) => r.title).filter(Boolean);
+      facts = [];
+    }
+
+    // Fallback: if synthesize returned nothing usable, use raw search titles
+    if (facts.filter((f) => f.trim().length >= 10).length === 0) {
+      facts = results.map((r) => r.title).filter((t) => t && t.length >= 10);
+      if (facts.length > 0) {
+        this.bus.emit({ phase: 'act', text: `Synthesize returned empty — using ${facts.length} search titles as facts`, ts: Date.now() });
+      }
     }
 
     let stored = 0;
