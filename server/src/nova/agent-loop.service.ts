@@ -28,6 +28,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   private isBusy   = false;
   private busyResolvers: Array<() => void> = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private lastGoalContext = '';
 
   private state: ConsciousnessState = initialState();
 
@@ -143,9 +144,18 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     const goalContext = await this.goals.getGoalContext();
 
     // ── Bootstrap cognitive core on first tick ────────────────────────────
-    if (this.state.tickCount === 1) {
+    const goalChanged = goalContext !== this.lastGoalContext && this.lastGoalContext !== '';
+    if (this.state.tickCount === 1 || goalChanged) {
+      if (goalChanged) {
+        this.logger.log(`[AgentLoop] Goal changed — resetting cognitive core`);
+        this.cognitiveCore.reset();
+        // Also reset recentTopics so Nova doesn't keep searching old queries
+        this.state.recentTopics = [];
+        this.state.openQuestions = [];
+      }
       await this.cognitiveCore.bootstrapTheory(goalContext);
     }
+    this.lastGoalContext = goalContext;
 
     // ── Observe ───────────────────────────────────────────────────────────
     const rawCount = await this.memory.countRaw();

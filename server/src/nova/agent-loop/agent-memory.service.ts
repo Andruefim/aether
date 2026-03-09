@@ -5,7 +5,7 @@ import { NovaMemoryService } from '../nova-memory.service';
 import { ThoughtBusService } from '../thought-bus.service';
 import { SummaryService } from '../summary.service';
 import { ConsciousnessState, CONSOLIDATION_MS } from './types';
-import { CONSOLIDATE_SYSTEM, JUDGE_SYSTEM, parseJson } from './prompts';
+import { buildJudgePrompt, CONSOLIDATE_SYSTEM, parseJson } from './prompts';
 
 @Injectable()
 export class AgentMemoryService {
@@ -30,7 +30,7 @@ export class AgentMemoryService {
 
   async judgeValue(text: string, goalContext: string): Promise<{ score: number; reason: string }> {
     const msgs: OllamaMessage[] = [
-      { role: 'system', content: JUDGE_SYSTEM },
+      { role: 'system', content: buildJudgePrompt(goalContext) },
       { role: 'user',   content: `Research goal: ${goalContext}\n\nFact to evaluate: "${text}"` },
     ];
     try {

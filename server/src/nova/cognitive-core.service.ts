@@ -188,6 +188,24 @@ export class CognitiveCoreService {
     }
   }
 
+  reset(): void {
+    this.theory            = null;
+    this.directive         = null;
+    this.directiveIssuedAt = 0;
+    this.narrativeLog      = [];
+    this.metaInsights      = [];
+    this.lastMetaAt        = 0;
+    this.metaCount         = 0;
+    this.ticksSinceLastMeta = 0;
+    this.metaInFlight      = null;
+    this.logger.log('[CognitiveCoreService] State reset — will re-bootstrap on next tick');
+    this.bus.emit({
+      phase: 'observe',
+      text:  '[Core] State reset — new research goal detected. Re-initializing theory...',
+      ts:    Date.now(),
+    });
+  }
+
   /**
    * Full cognitive state for REST API / UI.
    */

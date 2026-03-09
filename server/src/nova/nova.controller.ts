@@ -105,18 +105,23 @@ export class NovaController {
   @Post('goals')
   async createGoal(@Body() body: { text: string; priority?: number }) {
     if (!body.text?.trim()) throw new BadRequestException('text is required');
-    return this.goalService.create(body.text.trim(), body.priority ?? 0);
+    const goal = await this.goalService.create(body.text.trim(), body.priority ?? 0);
+    this.cognitiveCore.reset();          // ← NEW: re-bootstrap on next tick
+    return goal;
   }
 
   @Delete('goals/:id')
   async deleteGoal(@Param('id') id: string) {
     await this.goalService.remove(id);
+    this.cognitiveCore.reset();          // ← NEW
     return { ok: true };
   }
 
   @Post('goals/:id/toggle')
   async toggleGoal(@Param('id') id: string, @Body() body: { active: boolean }) {
-    return this.goalService.setActive(id, body.active);
+    const goal = await this.goalService.setActive(id, body.active);
+    this.cognitiveCore.reset();          // ← NEW
+    return goal;
   }
 
   @Post('goals/proposals/:id/approve')

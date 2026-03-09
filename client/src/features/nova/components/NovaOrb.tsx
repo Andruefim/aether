@@ -134,7 +134,7 @@ export function NovaOrb() {
       {/* Core orb sphere — starts at scale 0, grows via birth spring */}
       <mesh ref={orbRef} renderOrder={1} scale={0}>
         {/* detail=7 → ~163k triangles — prevents faceting from vertex displacement */}
-        <icosahedronGeometry args={[1.0, 300]} />
+        <icosahedronGeometry args={[1.0, 50]} />
         <shaderMaterial
           ref={orbMatRef}
           uniforms={orbUniforms}

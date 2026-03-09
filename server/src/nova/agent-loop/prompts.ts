@@ -155,12 +155,16 @@ Eliminate redundancy. Keep only the most important and novel information.
 Reply ONLY with a JSON array of strings:
 ["Consolidated fact 1.", "Consolidated fact 2."]`;
 
-export const JUDGE_SYSTEM = `You are Nova's memory gatekeeper.
+
+export function buildJudgePrompt(goalContext: string): string {
+  return `You are Nova's memory gatekeeper.
 Evaluate whether the following fact is worth storing in long-term memory.
-Consider: scientific significance, novelty, relevance to aging/longevity research, and factual clarity.
+Consider: relevance to the current research goal, novelty, and factual clarity.
+Current research goal: "${goalContext.slice(0, 200)}"
 Reply ONLY with a JSON object (no markdown):
 { "score": <0-10>, "reason": "<one short phrase>" }
-Score guide: 0-3 = trivial/irrelevant, 4-6 = useful but not critical, 7-10 = highly significant.`;
+Score guide: 0-3 = trivial/irrelevant to the goal, 4-6 = useful but not critical, 7-10 = highly relevant and significant.`;
+}
 
 /** Strip markdown code fences and parse JSON safely.
  *  When fallback is an array, automatically unwraps {"key": [...]} responses
