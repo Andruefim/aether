@@ -6,6 +6,7 @@ import { ConstellationTooltip, type TooltipState } from './components/Constellat
 import { ThoughtStreamWidget } from './components/ThoughtStreamWidget';
 import { GoalsWidget } from './components/GoalsWidget';
 import { ResearchSummaryWidget } from './components/ResearchSummaryWidget';
+import { CognitiveCoreWidget } from './components/CognitiveCoreWidget';
 import { useNovaInput, useNovaVoiceAgent } from './hooks';
 import { useAetherStore } from '../../core';
 import type { IncomingToken, StreamType } from './components/TokenGlyphSystem';
@@ -107,7 +108,10 @@ export function NovaPage() {
       <NovaStatusOverlay dialogueText={null} onDismiss={() => {}} />
       <ConstellationTooltip state={tooltip} />
 
-      {/* Left: research goals */}
+      {/* Top-left: Cognitive Core */}
+      <CognitiveCoreWidget />
+
+      {/* Bottom-left: research goals */}
       <GoalsWidget />
 
       {/* Right centre: thought stream */}

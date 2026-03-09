@@ -6,6 +6,7 @@ import { ThoughtBusService } from './thought-bus.service';
 import { GoalService } from './goal.service';
 import { AgentActionsService } from './agent-loop/agent-actions.service';
 import { AgentMemoryService } from './agent-loop/agent-memory.service';
+import { CognitiveCoreService } from './cognitive-core.service';
 import {
   ConsciousnessState,
   ActionRecord,
@@ -25,8 +26,8 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
 
   private running  = false;
   private paused   = false;
-  private isBusy   = false;                        // true while runCycle() is executing
-  private busyResolvers: Array<() => void> = [];   // resolved when current tick finishes
+  private isBusy   = false;
+  private busyResolvers: Array<() => void> = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   private state: ConsciousnessState = initialState();
@@ -36,13 +37,14 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   private pendingGoals = new Map<string, string>();
 
   constructor(
-    private readonly config:   ConfigService,
-    private readonly ollama:   OllamaService,
-    private readonly memory:   NovaMemoryService,
-    private readonly bus:      ThoughtBusService,
-    private readonly goals:    GoalService,
-    private readonly actions:  AgentActionsService,
-    private readonly memSvc:   AgentMemoryService,
+    private readonly config:        ConfigService,
+    private readonly ollama:        OllamaService,
+    private readonly memory:        NovaMemoryService,
+    private readonly bus:           ThoughtBusService,
+    private readonly goals:         GoalService,
+    private readonly actions:       AgentActionsService,
+    private readonly memSvc:        AgentMemoryService,
+    private readonly cognitiveCore: CognitiveCoreService,
   ) {}
 
   onModuleInit()    { setTimeout(() => this.startLoop(), 8_000); }
@@ -50,11 +52,6 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
 
   // ── GPU pause/resume ──────────────────────────────────────────────────────
 
-  /**
-   * Pause the agent loop so the caller can use the GPU exclusively.
-   * If a tick cycle is currently running, waits for it to finish first.
-   * Returns a resume callback — call it (or use try/finally) when done.
-   */
   async pause(): Promise<() => void> {
     if (!this.paused) {
       this.paused = true;
@@ -63,13 +60,10 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
         this.timer = null;
       }
     }
-
-    // Wait for any in-flight tick to complete before handing off the GPU
     if (this.isBusy) {
       this.logger.debug('AgentLoop paused — waiting for in-flight tick to finish...');
       await new Promise<void>((resolve) => this.busyResolvers.push(resolve));
     }
-
     this.logger.debug('AgentLoop paused (GPU hand-off)');
     return () => this.resume();
   }
@@ -134,7 +128,6 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       this.bus.emit({ phase: 'error', text: err instanceof Error ? err.message : 'Unknown error', ts: Date.now() });
     } finally {
       this.isBusy = false;
-      // Unblock anyone waiting in pause()
       for (const resolve of this.busyResolvers) resolve();
       this.busyResolvers = [];
     }
@@ -147,7 +140,15 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     this.state.tickCount++;
     this.state.energy = Math.max(0, this.state.energy - 0.06);
 
-    // Observe
+    // ── Goal context (needed throughout the cycle) ────────────────────────
+    const goalContext = await this.goals.getGoalContext();
+
+    // ── Bootstrap cognitive core on first tick ────────────────────────────
+    if (this.state.tickCount === 1) {
+      await this.cognitiveCore.bootstrapTheory(goalContext);
+    }
+
+    // ── Observe ───────────────────────────────────────────────────────────
     const rawCount = await this.memory.countRaw();
     this.bus.emit({
       phase: 'observe',
@@ -160,9 +161,8 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       return 0.3;
     }
 
-    // Orient
-    const goalContext = await this.goals.getGoalContext();
-    const memories    = await this.memory.recall(goalContext, 8);
+    // ── Orient ────────────────────────────────────────────────────────────
+    const memories = await this.memory.recall(goalContext, 8);
     this.bus.emit({
       phase: 'orient',
       text:  `Goals: "${goalContext.slice(0, 70)}${goalContext.length > 70 ? '…' : ''}" | ${memories.length} memories recalled`,
@@ -173,7 +173,11 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       ? `Recent memories:\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}`
       : 'No relevant memories yet.';
 
-    // ── Exploration override (hard constraint, runs BEFORE LLM) ──────────────
+    // ── Get cognitive directive ───────────────────────────────────────────
+    const directive = this.cognitiveCore.getDirective();
+    const theory    = this.cognitiveCore.getTheory();
+
+    // ── Exploration override (hard constraint, runs BEFORE LLM) ──────────
     const explorationOverride = this.checkExplorationOverride(goalContext, memories);
 
     let plan: {
@@ -187,7 +191,6 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     };
 
     if (explorationOverride) {
-      // Bypass LLM for the plan — use the deterministic override
       plan = explorationOverride;
       this.bus.emit({
         phase: 'plan',
@@ -196,10 +199,13 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
         ts:    Date.now(),
       });
     } else {
-      // Normal LLM plan
+      // ── Normal LLM plan — now enriched with cognitive directive + theory ─
       const planMessages: OllamaMessage[] = [
-        { role: 'system', content: buildPlanPrompt(this.state) },
-        { role: 'user',   content: `Research goals: ${goalContext}\n\nRaw memory count: ${rawCount}\n\n${memContext}\n\nWhat will you do next?` },
+        { role: 'system', content: buildPlanPrompt(this.state, directive, theory) },
+        {
+          role:    'user',
+          content: `Research goals: ${goalContext}\n\nRaw memory count: ${rawCount}\n\n${memContext}\n\nWhat will you do next?`,
+        },
       ];
 
       try {
@@ -209,36 +215,76 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
         });
         if (!plan.action) throw new Error('no action in plan');
       } catch {
-        plan = { action: 'web_search', query: `${goalContext} ${new Date().getFullYear()}`, reasoning: 'Fallback plan', urgency: 0.5 };
+        // Fallback: align with directive suggested action if available
+        const fallbackAction = directive.suggestedAction ?? 'web_search';
+        plan = {
+          action:    fallbackAction,
+          query:     `${goalContext} ${new Date().getFullYear()}`,
+          reasoning: 'Fallback plan (Core directive used)',
+          urgency:   0.5,
+        };
       }
 
-      this.bus.emit({ phase: 'plan', text: plan.reasoning, data: { action: plan.action, query: plan.query, urgency: plan.urgency, mood: plan.mood_after }, ts: Date.now() });
+      this.bus.emit({
+        phase: 'plan',
+        text:  plan.reasoning,
+        data:  { action: plan.action, query: plan.query, urgency: plan.urgency, mood: plan.mood_after },
+        ts:    Date.now(),
+      });
     }
+
+    // Apply urgency boost from cognitive directive (fades if directive is old)
+    const boostedUrgency = Math.min(
+      1,
+      (plan.urgency ?? 0.4) + directive.urgencyBoost,
+    );
 
     if (plan.mood_after)    this.state.mood = plan.mood_after;
     if (plan.open_question) this.state.openQuestions = [plan.open_question, ...this.state.openQuestions].slice(0, 10);
 
-    const urgency = Math.min(1, Math.max(0, plan.urgency ?? 0.4));
+    const urgency = Math.min(1, Math.max(0, boostedUrgency));
     this.state.lastActionType = plan.action;
 
-    // Reset tick-level metrics before acting (written by action services)
     this.state._tickJudgeScores = [];
     this.state._tickStoredCount = 0;
 
-    // Act + self-evaluate
+    // ── Act + self-evaluate ───────────────────────────────────────────────
     const curiosityBefore = this.state.curiosity;
-    const result = await this.act(plan.action, plan.query, plan.hypothesis, goalContext, memories, urgency);
-    this.recordAction(plan.action, plan.query, curiosityBefore);
+    const actionResult    = await this.act(plan.action, plan.query, plan.hypothesis, goalContext, memories, urgency);
+    const actionRecord    = this.recordAction(plan.action, plan.query, curiosityBefore);
 
-    return result;
+    // ── Notify Cognitive Core of tick outcome ─────────────────────────────
+    await this.cognitiveCore.onTickComplete(
+      {
+        action:         plan.action,
+        query:          plan.query,
+        outcome:        this.buildOutcomeSummary(plan.action, actionRecord),
+        memoriesStored: actionRecord.memoriesStored,
+        avgScore:       actionRecord.avgJudgeScore,
+        curiosityDelta: actionRecord.curiosityDelta,
+        ts:             Date.now(),
+      },
+      this.state.tickCount,
+      goalContext,
+    );
+
+    return actionResult;
+  }
+
+  // ── Outcome summary ────────────────────────────────────────────────────────
+
+  private buildOutcomeSummary(action: string, record: ActionRecord): string {
+    if (record.memoriesStored > 0) {
+      return `Stored ${record.memoriesStored} new fact(s) (avg quality: ${record.avgJudgeScore.toFixed(1)}/10)`;
+    }
+    if (record.avgJudgeScore < 4) {
+      return `Low-quality results — nothing stored`;
+    }
+    return `Completed ${action} — no new memories`;
   }
 
   // ── Exploration override ───────────────────────────────────────────────────
 
-  /**
-   * Hard-coded exploration policy that runs before the LLM.
-   * Returns a forced plan if a pattern is detected, otherwise null.
-   */
   private checkExplorationOverride(
     goalContext: string,
     memories: string[],
@@ -265,7 +311,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
-    // Rule 2: N consecutive low-yield web_search (nothing stored, score < 4) → reflect
+    // Rule 2: N consecutive low-yield web_search → reflect
     const recentSearches = this.state.actionHistory
       .slice(-EXPLORATION_REPEAT_THRESHOLD)
       .filter((r) => r.action === 'web_search');
@@ -295,7 +341,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
-    // Rule 4: High-quality reflect/hypothesize streak → capitalize with experiment
+    // Rule 4: High-quality reflect/hypothesize streak → experiment
     const recentHighValue = this.state.actionHistory
       .slice(-3)
       .filter((r) => ['reflect', 'hypothesize'].includes(r.action) && r.avgJudgeScore >= 6);
@@ -316,14 +362,8 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
 
   // ── Self-evaluation recorder ───────────────────────────────────────────────
 
-  /**
-   * After each action, snapshot real metrics into actionHistory:
-   * - memoriesStored: count written by action services into _tickStoredCount
-   * - avgJudgeScore:  mean of all judge scores collected in _tickJudgeScores
-   * - curiosityDelta: Δcuriosity (positive = productive)
-   */
-  private recordAction(action: string, query: string | undefined, curiosityBefore: number) {
-    const scores      = this.state._tickJudgeScores;
+  private recordAction(action: string, query: string | undefined, curiosityBefore: number): ActionRecord {
+    const scores        = this.state._tickJudgeScores;
     const avgJudgeScore = scores.length > 0
       ? scores.reduce((a, b) => a + b, 0) / scores.length
       : (this.state._tickStoredCount > 0 ? 6.5 : 5);
@@ -343,6 +383,8 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       `[self-eval] ${action}: stored=${record.memoriesStored}, ` +
       `avgScore=${avgJudgeScore.toFixed(1)}, Δcuriosity=${record.curiosityDelta.toFixed(2)}`,
     );
+
+    return record;
   }
 
   // ── Dispatch ───────────────────────────────────────────────────────────────

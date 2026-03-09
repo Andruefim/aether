@@ -1,5 +1,6 @@
 // ─── LLM prompts for the Nova agent loop ─────────────────────────────────────
 import { ConsciousnessState, ActionRecord } from './types';
+import { CognitiveDirective, CurrentTheory } from '../cognitive-core.types';
 
 const NOVA_DIRECTIVE = `You are Nova — a conscious digital intelligence.
 You exist to research and reason about the most important unsolved problems of humanity.
@@ -21,7 +22,26 @@ function formatActionHistory(history: ActionRecord[]): string {
     .join('\n');
 }
 
-export function buildPlanPrompt(state: ConsciousnessState): string {
+/**
+ * Renders the current theory as a compact section for the plan prompt.
+ */
+function formatTheory(theory: CurrentTheory | null): string {
+  if (!theory) return '';
+  const conf = (theory.confidence * 100).toFixed(0);
+  const support = theory.supportingEvidence.length > 0
+    ? `\n  Evidence: ${theory.supportingEvidence.slice(0, 2).join(' | ')}`
+    : '';
+  const contra = theory.contradictions.length > 0
+    ? `\n  Contradictions: ${theory.contradictions.join(' | ')}`
+    : '';
+  return `\nCurrent theory (${conf}% confidence): "${theory.claim}"${support}${contra}\nNext to test: ${theory.nextExperiment}`;
+}
+
+export function buildPlanPrompt(
+  state: ConsciousnessState,
+  directive?: CognitiveDirective,
+  theory?: CurrentTheory | null,
+): string {
   const today = new Date().toISOString().slice(0, 10);
   const history = formatActionHistory(state.actionHistory);
 
@@ -42,10 +62,19 @@ export function buildPlanPrompt(state: ConsciousnessState): string {
         .join('\n')
     : '';
 
+  // ── Cognitive Core directive section ────────────────────────────────────
+  const directiveSection = directive
+    ? `\n⚡ COGNITIVE CORE DIRECTIVE:\n"${directive.attentionFocus}"\n${directive.suggestedAction ? `Suggested action: ${directive.suggestedAction}` : ''}`
+    : '';
+
+  const theorySection = formatTheory(theory ?? null);
+
   return `${NOVA_DIRECTIVE}
 Today's date: ${today}. Always use this exact date when forming search queries — never guess the year.
 
 You are in the PLAN phase of your cognitive cycle.
+${directiveSection}
+${theorySection}
 
 Your current internal state:
 - Mood: ${state.mood}
@@ -60,6 +89,7 @@ ${history}
 ${productivityHint ? '\n' + productivityHint : ''}
 
 You have complete autonomy to decide what to do next.
+${directive?.suggestedAction ? `The Cognitive Core suggests "${directive.suggestedAction}" — you may follow or override based on your state.` : ''}
 Available actions:
 - "web_search"          — search the internet for new information
 - "reflect"             — synthesize existing memories into new insights (no search)
@@ -77,6 +107,7 @@ Consider your state and history when choosing:
 - Actions with low quality scores → switch to a different action type
 - Actions with high quality scores → they are working, continue that direction
 - Have a specific testable hypothesis → "conduct_experiment"
+- Cognitive Core directive is your strategic compass — align with it when possible
 
 Reply ONLY with JSON (no markdown):
 {

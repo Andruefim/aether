@@ -8,6 +8,7 @@ import { AgentLoopService } from './agent-loop.service';
 import { AgentToolsService } from './agent-tools.service';
 import { GoalService } from './goal.service';
 import { SummaryService } from './summary.service';
+import { CognitiveCoreService } from './cognitive-core.service';
 import { NovaGoal } from './entities/nova-goal.entity';
 import { OllamaService } from '../generate/ollama.service';
 import { AgentActionsService } from './agent-loop/agent-actions.service';
@@ -27,6 +28,7 @@ import { ExperimentModule } from '../experiment/experiment.module';
     AgentMemoryService,
     GoalService,
     SummaryService,
+    CognitiveCoreService,
     OllamaService,
   ],
 })
