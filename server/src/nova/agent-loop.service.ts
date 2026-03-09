@@ -16,7 +16,6 @@ import {
   MIN_TICK_MS,
   MAX_TICK_MS,
   SLEEP_THRESHOLD,
-  EXPLORATION_REPEAT_THRESHOLD,
 } from './agent-loop/types';
 import { buildPlanPrompt, parseJson } from './agent-loop/prompts';
 
@@ -177,9 +176,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     const directive = this.cognitiveCore.getDirective();
     const theory    = this.cognitiveCore.getTheory();
 
-    // ── Exploration override (hard constraint, runs BEFORE LLM) ──────────
-    const explorationOverride = this.checkExplorationOverride(goalContext, memories);
-
+    // ── LLM plan — enriched with cognitive directive + theory ─────────
     let plan: {
       action:         string;
       query?:         string;
@@ -190,48 +187,36 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       open_question?: string | null;
     };
 
-    if (explorationOverride) {
-      plan = explorationOverride;
-      this.bus.emit({
-        phase: 'plan',
-        text:  `[Exploration override] ${plan.reasoning}`,
-        data:  { action: plan.action, query: plan.query, urgency: plan.urgency, override: true },
-        ts:    Date.now(),
-      });
-    } else {
-      // ── Normal LLM plan — now enriched with cognitive directive + theory ─
-      const planMessages: OllamaMessage[] = [
-        { role: 'system', content: buildPlanPrompt(this.state, directive, theory) },
-        {
-          role:    'user',
-          content: `Research goals: ${goalContext}\n\nRaw memory count: ${rawCount}\n\n${memContext}\n\nWhat will you do next?`,
-        },
-      ];
+    const planMessages: OllamaMessage[] = [
+      { role: 'system', content: buildPlanPrompt(this.state, directive, theory) },
+      {
+        role:    'user',
+        content: `Research goals: ${goalContext}\n\nRaw memory count: ${rawCount}\n\n${memContext}\n\nWhat will you do next?`,
+      },
+    ];
 
-      try {
-        const resp = await this.ollama.chat(planMessages, undefined, this.fastModel, 'json');
-        plan = parseJson<typeof plan>(resp.content?.trim() ?? '{}', {
-          action: 'web_search', query: goalContext, reasoning: 'Fallback plan', urgency: 0.5,
-        });
-        if (!plan.action) throw new Error('no action in plan');
-      } catch {
-        // Fallback: align with directive suggested action if available
-        const fallbackAction = directive.suggestedAction ?? 'web_search';
-        plan = {
-          action:    fallbackAction,
-          query:     `${goalContext} ${new Date().getFullYear()}`,
-          reasoning: 'Fallback plan (Core directive used)',
-          urgency:   0.5,
-        };
-      }
-
-      this.bus.emit({
-        phase: 'plan',
-        text:  plan.reasoning,
-        data:  { action: plan.action, query: plan.query, urgency: plan.urgency, mood: plan.mood_after },
-        ts:    Date.now(),
+    try {
+      const resp = await this.ollama.chat(planMessages, undefined, this.fastModel, 'json');
+      plan = parseJson<typeof plan>(resp.content?.trim() ?? '{}', {
+        action: 'web_search', query: goalContext, reasoning: 'Fallback plan', urgency: 0.5,
       });
+      if (!plan.action) throw new Error('no action in plan');
+    } catch {
+      const fallbackAction = directive.suggestedAction ?? 'web_search';
+      plan = {
+        action:    fallbackAction,
+        query:     `${goalContext} ${new Date().getFullYear()}`,
+        reasoning: 'Fallback plan (Core directive used)',
+        urgency:   0.5,
+      };
     }
+
+    this.bus.emit({
+      phase: 'plan',
+      text:  plan.reasoning,
+      data:  { action: plan.action, query: plan.query, urgency: plan.urgency, mood: plan.mood_after },
+      ts:    Date.now(),
+    });
 
     // Apply urgency boost from cognitive directive (fades if directive is old)
     const boostedUrgency = Math.min(
@@ -283,82 +268,6 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     return `Completed ${action} — no new memories`;
   }
 
-  // ── Exploration override ───────────────────────────────────────────────────
-
-  private checkExplorationOverride(
-    goalContext: string,
-    memories: string[],
-  ): { action: string; query?: string; hypothesis?: string; reasoning: string; urgency: number } | null {
-    const recentN = this.state.actionHistory.slice(-EXPLORATION_REPEAT_THRESHOLD);
-
-    // Rule 1: N consecutive same actions → force a switch
-    if (
-      recentN.length >= EXPLORATION_REPEAT_THRESHOLD &&
-      recentN.every((r) => r.action === recentN[0].action)
-    ) {
-      const repeated = recentN[0].action;
-      const ESCAPE: Record<string, string> = {
-        web_search:  memories.length >= 2 ? 'reflect' : 'hypothesize',
-        reflect:     'hypothesize',
-        hypothesize: 'web_search',
-        rest:        'web_search',
-      };
-      const next = ESCAPE[repeated] ?? 'reflect';
-      return {
-        action:    next,
-        reasoning: `Forced exploration switch: "${repeated}" repeated ${EXPLORATION_REPEAT_THRESHOLD}× — trying "${next}" instead.`,
-        urgency:   0.6,
-      };
-    }
-
-    // Rule 2: N consecutive low-yield web_search → reflect
-    const recentSearches = this.state.actionHistory
-      .slice(-EXPLORATION_REPEAT_THRESHOLD)
-      .filter((r) => r.action === 'web_search');
-    if (
-      recentSearches.length >= EXPLORATION_REPEAT_THRESHOLD &&
-      recentSearches.every((r) => r.memoriesStored === 0 && r.avgJudgeScore < 4)
-    ) {
-      return {
-        action:    'reflect',
-        reasoning: `Low-yield searches detected (0 stored, avg score < 4) — switching to reflection.`,
-        urgency:   0.5,
-      };
-    }
-
-    // Rule 3: High curiosity + open questions + no recent hypothesize → hypothesize
-    const hasRecentHypothesis = this.state.actionHistory.slice(-3).some((r) => r.action === 'hypothesize');
-    if (
-      this.state.curiosity > 0.75 &&
-      this.state.openQuestions.length > 2 &&
-      !hasRecentHypothesis &&
-      this.state.actionHistory.length >= 3
-    ) {
-      return {
-        action:    'hypothesize',
-        reasoning: `High curiosity (${(this.state.curiosity * 100).toFixed(0)}%) + ${this.state.openQuestions.length} open questions → generating hypothesis.`,
-        urgency:   0.65,
-      };
-    }
-
-    // Rule 4: High-quality reflect/hypothesize streak → experiment
-    const recentHighValue = this.state.actionHistory
-      .slice(-3)
-      .filter((r) => ['reflect', 'hypothesize'].includes(r.action) && r.avgJudgeScore >= 6);
-    if (recentHighValue.length >= 2 && memories.length >= 3 && goalContext.length > 0) {
-      const hasRecentExperiment = this.state.actionHistory.slice(-3).some((r) => r.action === 'conduct_experiment');
-      if (!hasRecentExperiment) {
-        return {
-          action:    'conduct_experiment',
-          hypothesis: `Based on recent high-quality insights about: ${goalContext}`,
-          reasoning: `High-value reflection streak detected (avg score ≥ 6) → running experiment.`,
-          urgency:   0.7,
-        };
-      }
-    }
-
-    return null;
-  }
 
   // ── Self-evaluation recorder ───────────────────────────────────────────────
 
