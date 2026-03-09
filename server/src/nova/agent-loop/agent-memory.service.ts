@@ -22,7 +22,7 @@ export class AgentMemoryService {
   ) {}
 
   private get fastModel() {
-    return this.config.get<string>('NOVA_FAST_MODEL', 'qwen3.5:2b');
+    return this.config.get<string>('NOVA_FAST_MODEL', 'qwen3.5:9b');
   }
 
   // ── LLM judge: evaluate a fact before storing ──────────────────────────────

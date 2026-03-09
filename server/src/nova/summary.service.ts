@@ -118,7 +118,7 @@ export class SummaryService {
     ];
 
     try {
-      const model = this.config.get<string>('NOVA_FAST_MODEL', 'qwen3.5:2b');
+      const model = this.config.get<string>('NOVA_FAST_MODEL', 'qwen3.5:9b');
       const resp  = await this.ollama.chat(messages, undefined, model, 'json');
       const raw   = resp.content?.trim() ?? '{}';
       const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();

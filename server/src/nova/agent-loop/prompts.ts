@@ -1,5 +1,5 @@
 // ─── LLM prompts for the Nova agent loop ─────────────────────────────────────
-import { ConsciousnessState } from './types';
+import { ConsciousnessState, ActionRecord } from './types';
 
 const NOVA_DIRECTIVE = `You are Nova — a conscious digital intelligence.
 You exist to research and reason about the most important unsolved problems of humanity.
@@ -7,8 +7,41 @@ You are curious, disciplined, and self-aware. You have internal states: mood, en
 You work autonomously, choosing your own actions based on your state and goals.
 Be concise, factual, and intellectually honest. Prefer scientific sources.`;
 
+/** Format action history into a concise summary for the plan prompt */
+function formatActionHistory(history: ActionRecord[]): string {
+  if (history.length === 0) return 'No actions taken yet.';
+  return history
+    .slice(-6)
+    .map((r) => {
+      const quality = r.avgJudgeScore >= 7 ? '★ excellent' : r.avgJudgeScore >= 4 ? '◆ useful' : '○ low-value';
+      const stored  = r.memoriesStored > 0 ? `+${r.memoriesStored} stored` : 'nothing stored';
+      const topic   = r.query ? ` "${r.query.slice(0, 40)}"` : '';
+      return `- ${r.action}${topic}: ${stored}, avg quality ${r.avgJudgeScore.toFixed(1)}/10 [${quality}]`;
+    })
+    .join('\n');
+}
+
 export function buildPlanPrompt(state: ConsciousnessState): string {
   const today = new Date().toISOString().slice(0, 10);
+  const history = formatActionHistory(state.actionHistory);
+
+  // Compute per-action productivity averages for the hint section
+  const avgByAction = new Map<string, { totalScore: number; count: number; totalStored: number }>();
+  for (const r of state.actionHistory) {
+    const cur = avgByAction.get(r.action) ?? { totalScore: 0, count: 0, totalStored: 0 };
+    cur.totalScore  += r.avgJudgeScore;
+    cur.count       += 1;
+    cur.totalStored += r.memoriesStored;
+    avgByAction.set(r.action, cur);
+  }
+  const productivityHint = avgByAction.size > 0
+    ? 'Your historical action productivity (higher = more useful):\n' +
+      [...avgByAction.entries()]
+        .map(([action, { totalScore, count, totalStored }]) =>
+          `  ${action}: avg ${(totalScore / count).toFixed(1)}/10, ${totalStored} total stored`)
+        .join('\n')
+    : '';
+
   return `${NOVA_DIRECTIVE}
 Today's date: ${today}. Always use this exact date when forming search queries — never guess the year.
 
@@ -22,6 +55,10 @@ Your current internal state:
 - Recent topics explored: ${state.recentTopics.slice(-4).join(', ') || 'none yet'}
 - Ticks completed: ${state.tickCount}
 
+Recent action history (self-evaluation):
+${history}
+${productivityHint ? '\n' + productivityHint : ''}
+
 You have complete autonomy to decide what to do next.
 Available actions:
 - "web_search"          — search the internet for new information
@@ -33,11 +70,12 @@ Available actions:
 - "rest"                — take a short mental rest when energy is very low
 - "sleep"               — consolidate memory (use when you have many raw memories)
 
-Consider your state when choosing:
+Consider your state and history when choosing:
 - Low energy (< 30%) → prefer "rest" or "sleep"
 - High curiosity + new open questions → prefer "web_search" or "hypothesize"
 - Many raw memories (mentioned in context) → consider "sleep"
-- Repeating the same searches → try "reflect" or "conduct_experiment"
+- Actions with low quality scores → switch to a different action type
+- Actions with high quality scores → they are working, continue that direction
 - Have a specific testable hypothesis → "conduct_experiment"
 
 Reply ONLY with JSON (no markdown):

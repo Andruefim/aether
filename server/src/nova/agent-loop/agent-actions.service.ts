@@ -31,7 +31,7 @@ export class AgentActionsService {
   ) {}
 
   private get fastModel() {
-    return this.config.get<string>('NOVA_FAST_MODEL', 'qwen3.5:2b');
+    return this.config.get<string>('NOVA_FAST_MODEL', 'qwen3.5:9b');
   }
 
   // ── web_search ─────────────────────────────────────────────────────────────
@@ -80,6 +80,7 @@ export class AgentActionsService {
     for (const fact of facts.slice(0, 3)) {
       if (fact.trim().length < 10) continue;
       const { score, reason } = await this.memSvc.judgeValue(fact, goalContext);
+      state._tickJudgeScores.push(score);
       if (score < 4) {
         this.bus.emit({ phase: 'act', text: `Rejected (score ${score}/10 — ${reason}): "${fact.slice(0, 50)}"`, ts: Date.now() });
         state.curiosity = Math.max(0, state.curiosity - 0.02);
@@ -92,6 +93,7 @@ export class AgentActionsService {
       } else if (result !== 'skipped') {
         this.bus.emit({ phase: 'store', text: `[${score}/10] ${fact}`, ts: Date.now() });
         stored++;
+        state._tickStoredCount++;
       }
     }
 
@@ -129,11 +131,13 @@ export class AgentActionsService {
     for (const insight of insights.slice(0, 2)) {
       if (insight.trim().length < 10) continue;
       const { score, reason } = await this.memSvc.judgeValue(insight, goalContext);
+      state._tickJudgeScores.push(score);
       if (score < 4) {
         this.bus.emit({ phase: 'act', text: `Insight rejected (${score}/10 — ${reason})`, ts: Date.now() });
         continue;
       }
       await this.memory.store(`[insight] ${insight}`, 'main', 'raw');
+      state._tickStoredCount++;
       this.bus.emit({ phase: 'store', text: `[insight ${score}/10] ${insight}`, ts: Date.now() });
     }
 
@@ -170,11 +174,13 @@ export class AgentActionsService {
     for (const h of hypotheses.slice(0, 2)) {
       if (h.trim().length < 10) continue;
       const { score, reason } = await this.memSvc.judgeValue(h, goalContext);
+      state._tickJudgeScores.push(score);
       if (score < 3) {
         this.bus.emit({ phase: 'act', text: `Hypothesis rejected (${score}/10 — ${reason})`, ts: Date.now() });
         continue;
       }
       await this.memory.store(h, 'main', 'raw');
+      state._tickStoredCount++;
       if (h.toLowerCase().startsWith('question:')) {
         state.openQuestions = [h, ...state.openQuestions].slice(0, 10);
       }

@@ -48,7 +48,7 @@ export class NovaService {
   ) {}
 
   private get mainModel(): string {
-    return this.config.get<string>('NOVA_MAIN_MODEL', 'qwen3.5:2b');
+    return this.config.get<string>('NOVA_MAIN_MODEL', 'qwen3.5:9b');
   }
 
   private get fastModel(): string {

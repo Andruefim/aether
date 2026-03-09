@@ -9,9 +9,16 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, 'src'),
     },
+    // Prevent multiple copies of React when packages bundle their own
+    dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'three', '@react-three/fiber', 'zustand'],
   },
   server: {
     port: 5173,
+    hmr: {
+      protocol: 'ws',
+      host: 'localhost',
+      port: 5173,
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3002',
