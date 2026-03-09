@@ -36,10 +36,23 @@ export class OllamaService {
   private readonly baseUrl: string;
   readonly defaultModel: string;
 
+  // GPU mutex — serialize all Ollama access so concurrent callers
+  // (agent loop, cognitive core, widget generation) never hit the GPU
+  // simultaneously, which causes fetch failures under high load.
+  private gpuQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly config: ConfigService) {
     this.baseUrl = this.config.get<string>('OLLAMA_BASE_URL', 'http://localhost:11434');
     this.defaultModel = this.config.get<string>('OLLAMA_MODEL', 'qwen3.5:9b');
     this.logger.log(`Ollama: baseUrl=${this.baseUrl} defaultModel=${this.defaultModel}`);
+  }
+
+  private acquireLock(): Promise<() => void> {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const prev = this.gpuQueue;
+    this.gpuQueue = gate;
+    return prev.then(() => release);
   }
 
   /**
@@ -47,6 +60,20 @@ export class OllamaService {
    * format='json' forces Ollama to return valid JSON (structured output mode).
    */
   async chat(
+    messages: OllamaMessage[],
+    tools?: OllamaTool[],
+    model?: string,
+    format?: 'json',
+  ): Promise<OllamaMessage> {
+    const release = await this.acquireLock();
+    try {
+      return await this.chatInner(messages, tools, model, format);
+    } finally {
+      release();
+    }
+  }
+
+  private async chatInner(
     messages: OllamaMessage[],
     tools?: OllamaTool[],
     model?: string,
@@ -106,6 +133,15 @@ export class OllamaService {
   }
 
   async *streamMessages(messages: OllamaMessage[], model?: string): AsyncGenerator<string> {
+    const release = await this.acquireLock();
+    try {
+      yield* this.streamMessagesInner(messages, model);
+    } finally {
+      release();
+    }
+  }
+
+  private async *streamMessagesInner(messages: OllamaMessage[], model?: string): AsyncGenerator<string> {
     const modelName = model ?? this.defaultModel;
     const totalChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
     this.logger.log(`Ollama: streamMessages model=${modelName} messages=${messages.length} totalChars≈${totalChars}`);
