@@ -13,27 +13,41 @@ import {
 const SANDBOX_URL_DEFAULT = 'http://localhost:5050';
 
 const PLAN_SYSTEM = `You are Nova's experiment designer.
-Given a research hypothesis and goal, design a Python experiment to test it using real-world data.
-Available libraries: numpy, pandas, scipy, networkx, requests (for PubChem, UniProt, PDB APIs).
-Optional if installed: rdkit (chemistry), Bio (biology), sklearn.
+Given a research hypothesis and goal, design a Python experiment to test it.
+Available libraries: numpy, pandas, scipy, networkx, requests (for public APIs).
 
-The code MUST call nova_output(dict) at the end with structured results. Example:
+CRITICAL CODING RULES — follow these or the experiment will crash:
+- ALWAYS check the type of API responses before indexing: use isinstance(data, dict) / isinstance(data, list)
+- NEVER do data['key'] without first confirming data is a dict
+- NEVER iterate over a string thinking it's a list
+- Wrap ALL requests calls in try/except and check response.status_code before .json()
+- Always call nova_output({...}) at the end — even if the experiment produced no results
+- Use only simple arithmetic and pandas — no complex imports
+
+Example safe API pattern:
+  try:
+      resp = requests.get(url, timeout=10)
+      resp.raise_for_status()
+      data = resp.json()
+      if not isinstance(data, (dict, list)):
+          nova_output({"type": "text", "summary": f"Unexpected response type: {type(data)}"})
+  except Exception as e:
+      nova_output({"type": "text", "summary": f"Request failed: {e}"})
+
+nova_output must be called with:
 nova_output({
-  "type": "scatter3d",            # visualization type
-  "points": [[x,y,z,label],...],  # data for renderer
-  "summary": "one sentence",      # what was found
+  "type": "text",
+  "summary": "one sentence finding",
   "metrics": {"key": value}
 })
-
-Visualization types: molecule3d | graph3d | scatter3d | timeseries | heatmap | text | none
 
 Reply ONLY with JSON (no markdown):
 {
   "hypothesis": "<restate clearly>",
-  "domain": "<molecular|data|network|simulation|custom>",
+  "domain": "<data|network|simulation|custom>",
   "approach": "<one sentence>",
   "code": "<complete Python code>",
-  "visualization": "<type>"
+  "visualization": "text"
 }`;
 
 const INTERPRET_SYSTEM = `You are Nova's scientific interpreter.
@@ -77,7 +91,7 @@ export class ExperimentService {
     return this.recentResults.slice(-limit);
   }
 
-  /** Full experiment lifecycle: plan → execute → interpret → store */
+  /** Full experiment lifecycle: plan → execute (+ retry) → interpret → store */
   async runExperiment(hypothesis: string, goalContext: string): Promise<ExperimentResult> {
     const id  = crypto.randomUUID();
     const t0  = Date.now();
@@ -97,16 +111,63 @@ export class ExperimentService {
 
     this.emit({ phase: 'plan', text: `Approach: ${plan.approach}`, experimentId: id, ts: Date.now() });
 
-    // ── Execute ───────────────────────────────────────────────────────────────
+    // ── Execute (with one retry on failure) ───────────────────────────────────
     this.emit({ phase: 'execute', text: 'Running Python sandbox...', experimentId: id, ts: Date.now() });
 
-    let sandboxResult: { success: boolean; stdout: string; stderr: string; result: Record<string, unknown>; error?: string };
+    let sandboxResult: {
+      success: boolean;
+      stdout: string;
+      stderr: string;
+      result: Record<string, unknown>;
+      error?: string;
+    };
+
     try {
       sandboxResult = await this.executeSandbox(plan.code, id);
     } catch (err) {
       const result = this.makeError(id, hypothesis, err, Date.now() - t0);
       this.finalize(result);
       return result;
+    }
+
+    // ── Retry: if sandbox failed, ask LLM to fix the code ────────────────────
+    if (!sandboxResult.success) {
+      const errorMsg = sandboxResult.error ?? sandboxResult.stderr?.slice(0, 300) ?? 'Unknown error';
+      this.emit({
+        phase: 'execute',
+        text:  `Sandbox error: ${errorMsg.slice(0, 100)} — asking LLM to fix...`,
+        experimentId: id,
+        ts: Date.now(),
+      });
+
+      try {
+        const fixMsgs: OllamaMessage[] = [
+          { role: 'system', content: PLAN_SYSTEM },
+          {
+            role:    'user',
+            content: `The following Python code failed with error: "${errorMsg}"\n\nFailed code:\n${plan.code}\n\nFix the code. Common cause: treating a string as a dict/list. Add type checks. Reply ONLY with JSON in the same format.`,
+          },
+        ];
+        const fixResp   = await this.ollama.chat(fixMsgs, undefined, undefined, 'json');
+        const fixRaw    = fixResp.content?.trim() ?? '{}';
+        const fixClean  = fixRaw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        const fixParsed = JSON.parse(fixClean) as Partial<ExperimentPlan>;
+
+        if (fixParsed.code) {
+          plan.code     = fixParsed.code;
+          sandboxResult = await this.executeSandbox(plan.code, id);
+          this.emit({
+            phase: 'execute',
+            text:  sandboxResult.success
+              ? 'Retry succeeded.'
+              : `Retry also failed: ${sandboxResult.error?.slice(0, 80)}`,
+            experimentId: id,
+            ts: Date.now(),
+          });
+        }
+      } catch {
+        // retry failed — fall through to error handling below
+      }
     }
 
     if (!sandboxResult.success) {
@@ -119,7 +180,7 @@ export class ExperimentService {
 
     this.emit({
       phase: 'execute',
-      text: `Executed in ${((Date.now() - t0) / 1000).toFixed(1)}s. Output: ${sandboxResult.stdout.slice(0, 120)}`,
+      text:  `Executed in ${((Date.now() - t0) / 1000).toFixed(1)}s. Output: ${sandboxResult.stdout.slice(0, 120)}`,
       experimentId: id,
       ts: Date.now(),
     });
@@ -133,14 +194,14 @@ export class ExperimentService {
     const result: ExperimentResult = {
       id,
       hypothesis,
-      success:       true,
-      stdout:        sandboxResult.stdout,
-      stderr:        sandboxResult.stderr,
-      visualization: plan.visualization,
+      success:        true,
+      stdout:         sandboxResult.stdout,
+      stderr:         sandboxResult.stderr,
+      visualization:  plan.visualization,
       visData,
       interpretation,
-      durationMs:    Date.now() - t0,
-      ts:            Date.now(),
+      durationMs:     Date.now() - t0,
+      ts:             Date.now(),
     };
 
     // ── Store in memory ───────────────────────────────────────────────────────
@@ -165,9 +226,9 @@ export class ExperimentService {
       { role: 'user',   content: `Research goal: ${goalContext}\n\nHypothesis to test: "${hypothesis}"\n\nDesign an experiment.` },
     ];
 
-    const resp  = await this.ollama.chat(msgs, undefined, undefined, 'json');
-    const raw   = resp.content?.trim() ?? '{}';
-    const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const resp   = await this.ollama.chat(msgs, undefined, undefined, 'json');
+    const raw    = resp.content?.trim() ?? '{}';
+    const clean  = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const parsed = JSON.parse(clean) as Partial<ExperimentPlan>;
 
     return {
@@ -197,7 +258,7 @@ export class ExperimentService {
     }>;
   }
 
-  // ── Interpret (LLM or VLM) ─────────────────────────────────────────────────
+  // ── Interpret (LLM) ────────────────────────────────────────────────────────
 
   private async interpret(
     hypothesis: string,
@@ -218,7 +279,6 @@ export class ExperimentService {
       content: `Research goal: ${goalContext}\n\n${context}\n\nWhat is the key scientific finding?`,
     };
 
-    // If screenshot provided, use vision capability
     if (screenshotB64) {
       userMsg.images = [screenshotB64.replace(/^data:image\/\w+;base64,/, '')];
     }
