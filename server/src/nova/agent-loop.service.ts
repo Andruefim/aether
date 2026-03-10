@@ -7,6 +7,7 @@ import { GoalService } from './goal.service';
 import { AgentActionsService } from './agent-loop/agent-actions.service';
 import { AgentMemoryService } from './agent-loop/agent-memory.service';
 import { CognitiveCoreService } from './cognitive-core.service';
+import { NovaIdentityService } from './nova-identity.service';
 import {
   ConsciousnessState,
   ActionRecord,
@@ -28,13 +29,15 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   private isBusy   = false;
   private busyResolvers: Array<() => void> = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private lastGoalContext = '';
 
   private state: ConsciousnessState = initialState();
 
   private pendingQuestion: string | null = null;
   private questionResolve: ((answer: string) => void) | null = null;
   private pendingGoals = new Map<string, string>();
+
+  // Track goal changes for cognitive core reset
+  private lastGoalContext = '';
 
   constructor(
     private readonly config:        ConfigService,
@@ -45,6 +48,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     private readonly actions:       AgentActionsService,
     private readonly memSvc:        AgentMemoryService,
     private readonly cognitiveCore: CognitiveCoreService,
+    private readonly identity:      NovaIdentityService,
   ) {}
 
   onModuleInit()    { setTimeout(() => this.startLoop(), 8_000); }
@@ -55,23 +59,18 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   async pause(): Promise<() => void> {
     if (!this.paused) {
       this.paused = true;
-      if (this.timer) {
-        clearTimeout(this.timer);
-        this.timer = null;
-      }
+      if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     }
     if (this.isBusy) {
-      this.logger.debug('AgentLoop paused — waiting for in-flight tick to finish...');
+      this.logger.debug('AgentLoop paused — waiting for in-flight tick...');
       await new Promise<void>((resolve) => this.busyResolvers.push(resolve));
     }
-    this.logger.debug('AgentLoop paused (GPU hand-off)');
     return () => this.resume();
   }
 
   resume() {
     if (this.paused) {
       this.paused = false;
-      this.logger.debug('AgentLoop resumed');
       this.scheduleNext(0.3);
     }
   }
@@ -91,12 +90,17 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     if (goal) {
       this.goals.create(goal).catch(() => {});
       this.pendingGoals.delete(proposalId);
-      this.bus.emit({ phase: 'observe', text: `Goal approved and added: "${goal.slice(0, 60)}"`, ts: Date.now() });
+      this.cognitiveCore.reset();
+      this.bus.emit({ phase: 'observe', text: `Goal approved: "${goal.slice(0, 60)}"`, ts: Date.now() });
     }
   }
 
   rejectGoal(proposalId: string) {
     this.pendingGoals.delete(proposalId);
+  }
+
+  hasPendingQuestion(): boolean {
+    return this.pendingQuestion !== null;
   }
 
   // ── Loop ───────────────────────────────────────────────────────────────────
@@ -106,19 +110,14 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   private scheduleNext(urgency: number) {
     if (!this.running) return;
     const energyFactor = 0.5 + this.state.energy * 0.5;
-    const base   = MIN_TICK_MS + (1 - urgency) * (BASE_TICK_MS - MIN_TICK_MS);
-    const delay  = Math.round(base / energyFactor);
+    const base    = MIN_TICK_MS + (1 - urgency) * (BASE_TICK_MS - MIN_TICK_MS);
+    const delay   = Math.round(base / energyFactor);
     const clamped = Math.min(MAX_TICK_MS, Math.max(MIN_TICK_MS, delay));
-    this.logger.log(`Next tick in ${(clamped / 1000).toFixed(0)}s (urgency=${urgency.toFixed(2)}, energy=${this.state.energy.toFixed(2)})`);
     this.timer = setTimeout(() => this.tick(), clamped);
   }
 
   private async tick() {
-    if (!this.running) return;
-    if (this.paused) {
-      this.logger.debug('AgentLoop tick skipped (paused)');
-      return;
-    }
+    if (!this.running || this.paused) return;
     let urgency = 0.4;
     this.isBusy = true;
     try {
@@ -139,18 +138,17 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
   private async runCycle(): Promise<number> {
     this.state.tickCount++;
     this.state.energy = Math.max(0, this.state.energy - 0.06);
+    this.identity.recordTick();
 
-    // ── Goal context (needed throughout the cycle) ────────────────────────
     const goalContext = await this.goals.getGoalContext();
 
-    // ── Bootstrap cognitive core on first tick ────────────────────────────
+    // ── Detect goal change + re-bootstrap ─────────────────────────────────
     const goalChanged = goalContext !== this.lastGoalContext && this.lastGoalContext !== '';
     if (this.state.tickCount === 1 || goalChanged) {
       if (goalChanged) {
         this.logger.log(`[AgentLoop] Goal changed — resetting cognitive core`);
         this.cognitiveCore.reset();
-        // Also reset recentTopics so Nova doesn't keep searching old queries
-        this.state.recentTopics = [];
+        this.state.recentTopics  = [];
         this.state.openQuestions = [];
       }
       await this.cognitiveCore.bootstrapTheory(goalContext);
@@ -166,7 +164,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     });
 
     if (rawCount >= SLEEP_THRESHOLD) {
-      await this.memSvc.consolidate(rawCount, this.state);
+      await this.memSvc.consolidate(rawCount, this.state, goalContext);
       return 0.3;
     }
 
@@ -174,7 +172,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     const memories = await this.memory.recall(goalContext, 8);
     this.bus.emit({
       phase: 'orient',
-      text:  `Goals: "${goalContext.slice(0, 70)}${goalContext.length > 70 ? '…' : ''}" | ${memories.length} memories recalled`,
+      text:  `Goals: "${goalContext.slice(0, 70)}…" | ${memories.length} memories recalled`,
       ts:    Date.now(),
     });
 
@@ -182,15 +180,16 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       ? `Recent memories:\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}`
       : 'No relevant memories yet.';
 
-    // ── Get cognitive directive ───────────────────────────────────────────
-    const directive = this.cognitiveCore.getDirective();
-    const theory    = this.cognitiveCore.getTheory();
+    const directive     = this.cognitiveCore.getDirective();
+    const theory        = this.cognitiveCore.getTheory();
+    const identityCtx   = this.identity.buildDynamicContext();
 
-    // ── LLM plan — enriched with cognitive directive + theory ─────────
+    // ── Plan ──────────────────────────────────────────────────────────────
     let plan: {
       action:         string;
       query?:         string;
       hypothesis?:    string;
+      message?:       string;
       reasoning:      string;
       urgency:        number;
       mood_after?:    Mood;
@@ -198,7 +197,7 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     };
 
     const planMessages: OllamaMessage[] = [
-      { role: 'system', content: buildPlanPrompt(this.state, directive, theory) },
+      { role: 'system', content: buildPlanPrompt(this.state, directive, theory, identityCtx) },
       {
         role:    'user',
         content: `Research goals: ${goalContext}\n\nRaw memory count: ${rawCount}\n\n${memContext}\n\nWhat will you do next?`,
@@ -210,13 +209,12 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       plan = parseJson<typeof plan>(resp.content?.trim() ?? '{}', {
         action: 'web_search', query: goalContext, reasoning: 'Fallback plan', urgency: 0.5,
       });
-      if (!plan.action) throw new Error('no action in plan');
+      if (!plan.action) throw new Error('no action');
     } catch {
-      const fallbackAction = directive.suggestedAction ?? 'web_search';
       plan = {
-        action:    fallbackAction,
-        query:     `${goalContext} ${new Date().getFullYear()}`,
-        reasoning: 'Fallback plan (Core directive used)',
+        action:    directive.suggestedAction ?? 'web_search',
+        query:     goalContext,
+        reasoning: 'Fallback plan',
         urgency:   0.5,
       };
     }
@@ -228,27 +226,22 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       ts:    Date.now(),
     });
 
-    // Apply urgency boost from cognitive directive (fades if directive is old)
-    const boostedUrgency = Math.min(
-      1,
-      (plan.urgency ?? 0.4) + directive.urgencyBoost,
-    );
-
+    const boostedUrgency = Math.min(1, (plan.urgency ?? 0.4) + directive.urgencyBoost);
     if (plan.mood_after)    this.state.mood = plan.mood_after;
-    if (plan.open_question) this.state.openQuestions = [plan.open_question, ...this.state.openQuestions].slice(0, 10);
+    if (plan.open_question) {
+      this.state.openQuestions = [plan.open_question, ...this.state.openQuestions].slice(0, 10);
+      this.identity.addCuriosity(plan.open_question);
+    }
 
     const urgency = Math.min(1, Math.max(0, boostedUrgency));
     this.state.lastActionType = plan.action;
-
     this.state._tickJudgeScores = [];
     this.state._tickStoredCount = 0;
 
-    // ── Act + self-evaluate ───────────────────────────────────────────────
     const curiosityBefore = this.state.curiosity;
-    const actionResult    = await this.act(plan.action, plan.query, plan.hypothesis, goalContext, memories, urgency);
+    const actionResult    = await this.act(plan.action, plan.query, plan.hypothesis, plan.message, goalContext, memories, urgency);
     const actionRecord    = this.recordAction(plan.action, plan.query, curiosityBefore);
 
-    // ── Notify Cognitive Core of tick outcome ─────────────────────────────
     await this.cognitiveCore.onTickComplete(
       {
         action:         plan.action,
@@ -266,59 +259,20 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     return actionResult;
   }
 
-  // ── Outcome summary ────────────────────────────────────────────────────────
-
-  private buildOutcomeSummary(action: string, record: ActionRecord): string {
-    if (record.memoriesStored > 0) {
-      return `Stored ${record.memoriesStored} new fact(s) (avg quality: ${record.avgJudgeScore.toFixed(1)}/10)`;
-    }
-    if (record.avgJudgeScore < 4) {
-      return `Low-quality results — nothing stored`;
-    }
-    return `Completed ${action} — no new memories`;
-  }
-
-
-  // ── Self-evaluation recorder ───────────────────────────────────────────────
-
-  private recordAction(action: string, query: string | undefined, curiosityBefore: number): ActionRecord {
-    const scores        = this.state._tickJudgeScores;
-    const avgJudgeScore = scores.length > 0
-      ? scores.reduce((a, b) => a + b, 0) / scores.length
-      : (this.state._tickStoredCount > 0 ? 6.5 : 5);
-
-    const record: ActionRecord = {
-      action,
-      query,
-      memoriesStored:  this.state._tickStoredCount,
-      avgJudgeScore,
-      curiosityDelta:  this.state.curiosity - curiosityBefore,
-      ts:              Date.now(),
-    };
-
-    this.state.actionHistory = [...this.state.actionHistory, record].slice(-10);
-
-    this.logger.debug(
-      `[self-eval] ${action}: stored=${record.memoriesStored}, ` +
-      `avgScore=${avgJudgeScore.toFixed(1)}, Δcuriosity=${record.curiosityDelta.toFixed(2)}`,
-    );
-
-    return record;
-  }
-
   // ── Dispatch ───────────────────────────────────────────────────────────────
 
   private async act(
     action: string,
     query: string | undefined,
     hypothesis: string | undefined,
+    message: string | undefined,
     goalContext: string,
     memories: string[],
     urgency: number,
   ): Promise<number> {
     switch (action) {
       case 'sleep':
-        await this.memSvc.consolidate(await this.memory.countRaw(), this.state);
+        await this.memSvc.consolidate(await this.memory.countRaw(), this.state, goalContext);
         return 0.3;
 
       case 'rest':
@@ -333,6 +287,9 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       case 'hypothesize':
         return this.actions.doHypothesize(memories, goalContext, this.state);
 
+      case 'speak_to_user':
+        return this.actions.doSpeakToUser(memories, goalContext, this.state);
+
       case 'ask_user':
         return this.actions.doAskUser(memories, goalContext, this.state, this.pendingQuestion, (q) => {
           this.pendingQuestion = q;
@@ -341,8 +298,8 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
             setTimeout(() => {
               if (this.questionResolve) {
                 this.questionResolve('(no answer)');
-                this.questionResolve  = null;
-                this.pendingQuestion   = null;
+                this.questionResolve = null;
+                this.pendingQuestion  = null;
               }
             }, 120_000);
           });
@@ -365,6 +322,35 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
       default:
         return this.actions.doWebSearch(query ?? goalContext, goalContext, this.state);
     }
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  private buildOutcomeSummary(action: string, record: ActionRecord): string {
+    if (record.memoriesStored > 0)
+      return `Stored ${record.memoriesStored} new fact(s) (avg quality: ${record.avgJudgeScore.toFixed(1)}/10)`;
+    if (record.avgJudgeScore < 4)
+      return `Low-quality results — nothing stored`;
+    return `Completed ${action} — no new memories`;
+  }
+
+  private recordAction(action: string, query: string | undefined, curiosityBefore: number): ActionRecord {
+    const scores        = this.state._tickJudgeScores;
+    const avgJudgeScore = scores.length > 0
+      ? scores.reduce((a, b) => a + b, 0) / scores.length
+      : (this.state._tickStoredCount > 0 ? 6.5 : 5);
+
+    const record: ActionRecord = {
+      action,
+      query,
+      memoriesStored:  this.state._tickStoredCount,
+      avgJudgeScore,
+      curiosityDelta:  this.state.curiosity - curiosityBefore,
+      ts:              Date.now(),
+    };
+
+    this.state.actionHistory = [...this.state.actionHistory, record].slice(-10);
+    return record;
   }
 
   private get fastModel() {

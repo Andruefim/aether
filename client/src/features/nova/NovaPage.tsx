@@ -10,6 +10,7 @@ import { CognitiveCoreWidget } from './components/CognitiveCoreWidget';
 import { useNovaInput, useNovaVoiceAgent } from './hooks';
 import { useAetherStore } from '../../core';
 import type { IncomingToken, StreamType } from './components/TokenGlyphSystem';
+import { NovaMessage } from './components/NovaMessage';
 
 /**
  * Drips a full string into the glyph bucket word-by-word with stagger.
@@ -114,6 +115,17 @@ export function NovaPage() {
       {/* Bottom-left: research goals */}
       <GoalsWidget />
 
+      <NovaMessage
+        onReply={(text) => {
+          fetch('/api/nova/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ answer: text }),
+          });
+        }}
+        hasPendingQuestion={false}
+      />
+
       {/* Right centre: thought stream */}
       <ThoughtStreamWidget
         onAnswer={(ans) => {
@@ -128,6 +140,8 @@ export function NovaPage() {
 
       {/* Right: research summary */}
       <ResearchSummaryWidget />
+
+
 
       <AetherInputBar
         onSubmit={handleSubmit}

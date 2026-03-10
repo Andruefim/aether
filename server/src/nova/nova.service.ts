@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Observable } from 'rxjs';
 import { OllamaService, OllamaMessage } from '../generate/ollama.service';
 import { NovaMemoryService } from './nova-memory.service';
+import { NovaIdentityService } from './nova-identity.service';
 
 export interface NovaInputDto {
   text: string;
@@ -45,6 +46,7 @@ export class NovaService {
     private readonly config: ConfigService,
     private readonly ollama: OllamaService,
     private readonly memory: NovaMemoryService,
+    private readonly identity: NovaIdentityService,
   ) {}
 
   private get mainModel(): string {
@@ -103,8 +105,9 @@ export class NovaService {
           })();
 
           // ── 3. Main response (streaming) ──────────────────────────────────
+          const identityContext = this.identity.getSystemPrompt();
           const mainMessages: OllamaMessage[] = [
-            { role: 'system', content: NOVA_MAIN_PROMPT + memoryContext },
+            { role: 'system', content: identityContext + memoryContext },
             ...history,
             {
               role: 'user',

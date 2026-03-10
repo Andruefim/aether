@@ -41,6 +41,10 @@ nova_output({
   "metrics": {"key": value}
 })
 
+-The output function is called EXACTLY: nova_output(...)  
+  Never write ova_output, Nova_output, or any other variant.
+  Always end your code with: nova_output({"type": "text", "summary": "..."})
+
 Reply ONLY with JSON (no markdown):
 {
   "hypothesis": "<restate clearly>",
@@ -245,11 +249,13 @@ export class ExperimentService {
   // ── Execute (Python sandbox) ───────────────────────────────────────────────
 
   private async executeSandbox(code: string, experimentId: string) {
+    const fixedCode = code.replace(/\bova_output\s*\(/g, 'nova_output(');
+
     const res = await fetch(`${this.sandboxUrl}/run`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ code, timeout: 60, experiment_id: experimentId }),
-      signal:  AbortSignal.timeout(70_000),
+      body:    JSON.stringify({ code: fixedCode, timeout: 180, experiment_id: experimentId }),
+      signal:  AbortSignal.timeout(190_000),
     });
     if (!res.ok) throw new Error(`Sandbox HTTP ${res.status}`);
     return res.json() as Promise<{

@@ -1,14 +1,29 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter } from 'events';
 
-export type ThoughtPhase = 'observe' | 'orient' | 'plan' | 'act' | 'store' | 'sleep' | 'wake' | 'question' | 'error';
+export type ThoughtPhase =
+  | 'observe'
+  | 'orient'
+  | 'plan'
+  | 'act'
+  | 'store'
+  | 'sleep'
+  | 'wake'
+  | 'question'   // existing: Nova asks user, awaits reply
+  | 'speech'     // NEW: Nova speaks to user proactively (no reply required)
+  | 'error';
 
 export interface ThoughtEvent {
-  phase: ThoughtPhase;
-  text: string;
-  tool?: string;
-  data?: Record<string, unknown>;
-  ts: number;
+  phase:        ThoughtPhase;
+  text:         string;
+  tool?:        string;
+  data?:        Record<string, unknown>;
+  ts:           number;
+
+  // ── Speech-specific fields ──────────────────────────────────────────
+  // phase='speech': Nova is talking directly TO the user
+  messageId?:   string;   // unique id, used to match reply
+  awaitsReply?: boolean;  // true → client shows reply input
 }
 
 @Injectable()

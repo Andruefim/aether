@@ -3,9 +3,10 @@ Nova Lab — Python Sandbox
 FastAPI microservice that executes LLM-generated Python code for experiments.
 Runs on port 5050. Called by NestJS ExperimentService.
 
-Safety: code runs in the same process (no Docker), but with:
+Safety: code runs in the same process with:
   - Allowed import whitelist
-  - 60-second timeout via threading
+  - Auto-install for approved packages
+  - 180-second timeout via threading
   - No filesystem write outside /tmp/nova_sandbox/
 """
 from __future__ import annotations
@@ -14,6 +15,7 @@ import ast
 import io
 import json
 import os
+import subprocess
 import sys
 import textwrap
 import threading
@@ -22,7 +24,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -37,27 +39,100 @@ ALLOWED_IMPORTS = {
     "rdkit", "Bio", "requests", "urllib", "json", "re", "math", "random",
     # graphs
     "networkx", "nx",
-    # visualisation helpers (output as data, not display)
+    # visualisation
     "matplotlib", "mpl_toolkits", "plotly",
+    # web / scraping
+    "bs4", "beautifulsoup4", "lxml", "html5lib",
+    # youtube
+    "youtube_transcript_api", "pytube", "yt_dlp",
+    # astronomy / physics
+    "astropy", "halotools",
+    # nlp
+    "nltk", "spacy", "textblob",
+    # finance
+    "yfinance", "pandas_datareader",
     # stdlib safe
     "os", "sys", "io", "time", "datetime", "collections", "itertools",
     "functools", "typing", "dataclasses", "enum", "abc",
-    # pubchem / uniprot via requests
-    "http",
+    "hashlib", "base64", "gzip", "zipfile", "csv", "xml", "html",
+    "http", "pathlib", "string", "struct",
 }
 
-BLOCKED_CALLS = {"exec", "eval", "compile", "__import__", "open", "subprocess",
-                 "os.system", "os.popen", "shutil.rmtree"}
+# ── Auto-installable packages ─────────────────────────────────────────────────
+# Maps import name → pip package name
+AUTO_INSTALL_MAP: dict[str, str] = {
+    "bs4":                    "beautifulsoup4",
+    "beautifulsoup4":         "beautifulsoup4",
+    "lxml":                   "lxml",
+    "html5lib":               "html5lib",
+    "youtube_transcript_api": "youtube-transcript-api",
+    "pytube":                 "pytube",
+    "yt_dlp":                 "yt-dlp",
+    "astropy":                "astropy",
+    "halotools":              "halotools",
+    "nltk":                   "nltk",
+    "textblob":               "textblob",
+    "yfinance":               "yfinance",
+    "pandas_datareader":      "pandas-datareader",
+    "sklearn":                "scikit-learn",
+    "statsmodels":            "statsmodels",
+    "networkx":               "networkx",
+    "plotly":                 "plotly",
+    "spacy":                  "spacy",
+}
 
-app = FastAPI(title="Nova Sandbox", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+BLOCKED_CALLS = {
+    "exec", "eval", "compile", "__import__",
+    "subprocess", "os.system", "os.popen", "shutil.rmtree",
+}
+
+app = FastAPI(title="Nova Sandbox", version="2.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Track auto-installed packages (avoid reinstalling each request) ───────────
+_installed_cache: set[str] = set()
+
+
+def auto_install(import_name: str) -> tuple[bool, str]:
+    """Try to pip-install a package. Returns (success, message)."""
+    pip_pkg = AUTO_INSTALL_MAP.get(import_name)
+    if not pip_pkg:
+        return False, f"No auto-install mapping for '{import_name}'"
+
+    if pip_pkg in _installed_cache:
+        return True, f"{pip_pkg} already installed"
+
+    print(f"[sandbox] Auto-installing: {pip_pkg} ...", flush=True)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", pip_pkg, "--quiet"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            _installed_cache.add(pip_pkg)
+            print(f"[sandbox] Installed {pip_pkg} OK", flush=True)
+            return True, f"Installed {pip_pkg}"
+        else:
+            err = result.stderr.strip()[:300]
+            return False, f"pip install {pip_pkg} failed: {err}"
+    except subprocess.TimeoutExpired:
+        return False, f"pip install {pip_pkg} timed out"
+    except Exception as e:
+        return False, str(e)
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
 
 class RunRequest(BaseModel):
     code: str
-    timeout: int = 60          # seconds
+    timeout: int = 180
     experiment_id: str = ""
 
 
@@ -65,19 +140,25 @@ class RunResponse(BaseModel):
     success: bool
     stdout: str
     stderr: str
-    result: dict[str, Any]    # structured output written by the code
+    result: dict[str, Any]
     error: str | None = None
 
 
-# ── AST safety check ─────────────────────────────────────────────────────────
+# ── AST safety check ──────────────────────────────────────────────────────────
 
-def check_safety(code: str) -> list[str]:
-    """Return list of safety violations. Empty = safe."""
+def check_safety(code: str) -> tuple[list[str], list[str]]:
+    """
+    Returns (violations, imports_to_install).
+    violations        — hard blocks, abort execution
+    imports_to_install — packages that need auto-install before running
+    """
     violations: list[str] = []
+    to_install: list[str] = []
+
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
-        return [f"SyntaxError: {e}"]
+        return [f"SyntaxError: {e}"], []
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -87,7 +168,17 @@ def check_safety(code: str) -> list[str]:
                 else [node.module.split(".")[0] if node.module else ""]
             )
             for name in names:
-                if name and name not in ALLOWED_IMPORTS:
+                if not name:
+                    continue
+                if name in ALLOWED_IMPORTS:
+                    # Check if it needs auto-installation
+                    if name in AUTO_INSTALL_MAP:
+                        try:
+                            __import__(name)
+                        except ImportError:
+                            if name not in to_install:
+                                to_install.append(name)
+                else:
                     violations.append(f"Blocked import: {name}")
 
         if isinstance(node, ast.Call):
@@ -99,7 +190,7 @@ def check_safety(code: str) -> list[str]:
             if func_name in BLOCKED_CALLS:
                 violations.append(f"Blocked call: {func_name}")
 
-    return violations
+    return violations, to_install
 
 
 # ── Execution ─────────────────────────────────────────────────────────────────
@@ -113,13 +204,30 @@ def _run_code(code: str, namespace: dict, exc_holder: list) -> None:
 
 @app.post("/run", response_model=RunResponse)
 async def run_experiment(req: RunRequest) -> RunResponse:
-    # Safety check
-    violations = check_safety(req.code)
+    # Fix common LLM typos
+    code = req.code.replace("ova_output(", "nova_output(")
+    code = code.replace("Nova_output(", "nova_output(")
+
+    # Safety check — get violations and packages to install
+    violations, to_install = check_safety(code)
     if violations:
         return RunResponse(
             success=False, stdout="", stderr="",
-            result={}, error=f"Safety violations: {'; '.join(violations)}",
+            result={},
+            error=f"Safety violations: {'; '.join(violations)}",
         )
+
+    # Auto-install missing packages before execution
+    install_log: list[str] = []
+    for import_name in to_install:
+        ok, msg = auto_install(import_name)
+        install_log.append(msg)
+        if not ok:
+            return RunResponse(
+                success=False, stdout="", stderr="",
+                result={},
+                error=f"Auto-install failed: {msg}",
+            )
 
     # Build execution namespace with helpers
     namespace: dict[str, Any] = {
@@ -128,7 +236,6 @@ async def run_experiment(req: RunRequest) -> RunResponse:
         "_sandbox_tmp": str(SANDBOX_TMP),
     }
 
-    # Inject result-writing helper
     preamble = textwrap.dedent("""
         import json as _json
 
@@ -136,6 +243,9 @@ async def run_experiment(req: RunRequest) -> RunResponse:
             \"\"\"Call this to set the structured output returned to Nova.\"\"\"
             global _nova_result
             _nova_result = data
+
+        # Alias — catches LLM typo
+        ova_output = nova_output
 
         def nova_save(filename: str, content: str) -> str:
             \"\"\"Save a file to sandbox tmp and return path.\"\"\"
@@ -146,13 +256,15 @@ async def run_experiment(req: RunRequest) -> RunResponse:
             return path
     """)
 
-    full_code = preamble + "\n" + req.code
+    full_code = preamble + "\n" + code
 
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
     exc_holder: list[str] = []
 
-    # Run in thread with timeout
+    if install_log:
+        stdout_buf.write(f"[auto-install] {'; '.join(install_log)}\n")
+
     thread = threading.Thread(
         target=_run_code,
         args=(full_code, namespace, exc_holder),
@@ -200,15 +312,22 @@ async def health() -> dict:
 
 @app.get("/capabilities")
 async def capabilities() -> dict:
-    """Return available libraries so the LLM knows what it can use."""
+    """Return available and auto-installable libraries."""
     available = {}
-    for lib in ["numpy", "pandas", "scipy", "rdkit", "networkx", "Bio", "sklearn", "requests"]:
+    for lib in ["numpy", "pandas", "scipy", "rdkit", "networkx", "Bio",
+                "sklearn", "requests", "bs4", "youtube_transcript_api",
+                "astropy", "yfinance", "nltk"]:
         try:
             __import__(lib)
             available[lib] = True
         except ImportError:
             available[lib] = False
-    return {"available": available, "sandbox_tmp": str(SANDBOX_TMP)}
+
+    return {
+        "available":        available,
+        "auto_installable": list(AUTO_INSTALL_MAP.keys()),
+        "sandbox_tmp":      str(SANDBOX_TMP),
+    }
 
 
 if __name__ == "__main__":
