@@ -4,6 +4,8 @@ import { Observable } from 'rxjs';
 import { OllamaService, OllamaMessage } from '../generate/ollama.service';
 import { NovaMemoryService } from './nova-memory.service';
 import { NovaIdentityService } from './nova-identity.service';
+import { GoalService } from './goal.service';
+import { CognitiveCoreService } from './cognitive-core.service';
 
 export interface NovaInputDto {
   text: string;
@@ -47,6 +49,8 @@ export class NovaService {
     private readonly ollama: OllamaService,
     private readonly memory: NovaMemoryService,
     private readonly identity: NovaIdentityService,
+    private readonly goals: GoalService,
+    private readonly cognitiveCore: CognitiveCoreService,
   ) {}
 
   private get mainModel(): string {
@@ -109,14 +113,37 @@ export class NovaService {
           // ── 3. Main response (streaming) ──────────────────────────────────
           const identityContext = this.identity.getSystemPrompt();
           const toolsContext = `
-          YOUR CAPABILITIES:
-          - You have Nova Lab — a Python sandbox where you can run real experiments
-          - You have persistent memory in Qdrant vector database  
-          - You have an autonomous agent loop that researches 24/7
-          - When user asks to run an experiment, tell them you'll queue it — don't write code manually.`;
+YOUR CAPABILITIES (same as your autonomous agent loop):
+- Nova Lab: run Python experiments (e.g. fetch YouTube transcripts, call APIs, analyze data)
+- Persistent memory (Qdrant), web search, reflect, hypothesize, propose goals
+- When user asks to run an experiment, tell them you'll queue it — don't write code manually.
+
+RESPONSE LENGTH: Keep your reply to at most 100 words. Your answer is shown as floating 3D text — short, clear replies work best. Prefer 1–4 sentences.`;
+
+          // Full Cognitive Core context so dialogue Nova sees goals, theory, directive
+          const activeGoals = await this.goals.findActive();
+          const coreState = this.cognitiveCore.getState();
+          const goalsList = activeGoals.length > 0
+            ? activeGoals.map((g) => `- ${g.text}`).join('\n')
+            : '- (no active goals yet)';
+          const theoryBlock = coreState.theory
+            ? `Current theory (${(coreState.theory.confidence * 100).toFixed(0)}%): "${coreState.theory.claim}"\nNext experiment to try: ${coreState.theory.nextExperiment || '—'}`
+            : 'Current theory: (not yet formed)';
+          const directiveBlock = coreState.directive
+            ? `Directive: "${coreState.directive.attentionFocus}"${coreState.directive.suggestedAction ? ` | Suggested action: ${coreState.directive.suggestedAction}` : ''}`
+            : '';
+          const cognitiveContext = `
+
+COGNITIVE CORE CONTEXT (you have full access — use it when the user asks about goals, what you're working on, or your current focus):
+Research goals:
+${goalsList}
+
+${theoryBlock}
+${directiveBlock ? directiveBlock + '\n' : ''}
+When the user asks "do you see the goals?" or "what are you working on?", answer using the above.`;
 
           const mainMessages: OllamaMessage[] = [
-            { role: 'system', content: identityContext + toolsContext + memoryContext },
+            { role: 'system', content: identityContext + toolsContext + cognitiveContext + memoryContext },
             ...history,
             {
               role: 'user',

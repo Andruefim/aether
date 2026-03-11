@@ -55,12 +55,14 @@ const SETTLE_DAMP   = 0.96;
 const ASSOC_STAGGER_MS = 100;
 
 // Top-right corner layout params (Three.js world units)
+// Use generous spacing so variable-width text (Troika) doesn't overlap
 const SETTLE_START_X    =  0.55;  // leftmost edge of text block (right half of screen)
 const SETTLE_START_Y    =  1.82;  // top row
-const SETTLE_CHAR_W     =  0.038; // width per character (monospace-ish estimate)
-const SETTLE_WORD_GAP   =  0.055; // extra gap between words
-const SETTLE_ROW_H      =  0.17;  // vertical step between rows
-const SETTLE_MAX_LINE_W =  1.85;  // max line width before wrap (~5-6 words per line)
+const SETTLE_CHAR_W     =  0.052; // width per character (generous for variable-width font)
+const SETTLE_WORD_GAP   =  0.095; // gap between words (avoid merging)
+const SETTLE_ROW_H      =  0.20;  // vertical step between rows (avoid line overlap)
+const SETTLE_MAX_LINE_W =  1.80;  // max line width before wrap
+const SETTLE_MIN_WORD_W =  0.12;  // minimum width per word so "I" / "a" don't collapse
 
 const FS: Record<StreamType, number> = {
   main:        0.068,
@@ -102,7 +104,7 @@ function computeSettlePositions(words: string[]): THREE.Vector3[] {
   let row = 0;
 
   for (const word of words) {
-    const wordW = word.length * SETTLE_CHAR_W;
+    const wordW = Math.max(word.length * SETTLE_CHAR_W, SETTLE_MIN_WORD_W);
     // Wrap to next line if word doesn't fit
     if (x + wordW > SETTLE_START_X + SETTLE_MAX_LINE_W && x > SETTLE_START_X) {
       x = SETTLE_START_X;
