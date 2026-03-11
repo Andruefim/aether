@@ -88,26 +88,35 @@ export class NovaService {
 
           // ── 0. Recall relevant memories ───────────────────────────────────
           const memories = await this.memory.recall(dto.text, 5);
+          await this.memory.store(`[USER MESSAGE] ${dto.text}`, 'main', 'raw', 0.9).catch(() => {});
+
           const memoryContext = memories.length > 0
             ? `\n\nRelevant memories from past conversations:\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}`
             : '';
 
           // ── 2. Associations (streaming word fragments) ────────────────────
-          const assocMessages: OllamaMessage[] = [
-            { role: 'system', content: NOVA_ASSOCIATION_PROMPT },
-            { role: 'user', content: dto.text },
-          ];
+          // const assocMessages: OllamaMessage[] = [
+          //   { role: 'system', content: NOVA_ASSOCIATION_PROMPT },
+          //   { role: 'user', content: dto.text },
+          // ];
 
-          const assocPromise = await (async () => {
-            for await (const token of this.ollama.streamMessages(assocMessages, this.fastModel)) {
-              emit({ type: 'token', stream: 'association', text: token, color: STREAM_COLORS.association });
-            }
-          })();
+          // const assocPromise = await (async () => {
+          //   for await (const token of this.ollama.streamMessages(assocMessages, this.fastModel)) {
+          //     emit({ type: 'token', stream: 'association', text: token, color: STREAM_COLORS.association });
+          //   }
+          // })();
 
           // ── 3. Main response (streaming) ──────────────────────────────────
           const identityContext = this.identity.getSystemPrompt();
+          const toolsContext = `
+          YOUR CAPABILITIES:
+          - You have Nova Lab — a Python sandbox where you can run real experiments
+          - You have persistent memory in Qdrant vector database  
+          - You have an autonomous agent loop that researches 24/7
+          - When user asks to run an experiment, tell them you'll queue it — don't write code manually.`;
+
           const mainMessages: OllamaMessage[] = [
-            { role: 'system', content: identityContext + memoryContext },
+            { role: 'system', content: identityContext + toolsContext + memoryContext },
             ...history,
             {
               role: 'user',
@@ -123,7 +132,7 @@ export class NovaService {
           })();
 
           // Run all three in parallel
-          await Promise.all([ mainPromise, assocPromise]);
+          await Promise.all([ mainPromise]);
 
           emit({ type: 'done' });
         } catch (err) {

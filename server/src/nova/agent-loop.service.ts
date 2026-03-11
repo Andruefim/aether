@@ -99,6 +99,15 @@ export class AgentLoopService implements OnModuleInit, OnModuleDestroy {
     this.pendingGoals.delete(proposalId);
   }
 
+  injectUserCorrection(text: string) {
+    this.state.openQuestions = [
+      `USER CORRECTED ME: "${text}" — I must reconsider my previous findings on this.`,
+      ...this.state.openQuestions,
+    ].slice(0, 10);
+  
+    this.state.recentTopics = [];
+  }
+
   hasPendingQuestion(): boolean {
     return this.pendingQuestion !== null;
   }

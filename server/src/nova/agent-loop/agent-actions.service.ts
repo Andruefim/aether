@@ -180,22 +180,31 @@ export class AgentActionsService {
     } catch { hypotheses = []; }
 
     for (const h of hypotheses.slice(0, 2)) {
-      if (h.trim().length < 10) continue;
-      const { score, reason } = await this.memSvc.judgeValue(h, goalContext);
-      state._tickJudgeScores.push(score);
-      if (score < 3) {
-        this.bus.emit({ phase: 'act', text: `Hypothesis rejected (${score}/10 — ${reason})`, ts: Date.now() });
-        continue;
-      }
-      await this.memory.store(h, 'main', 'raw');
+    if (h.trim().length < 10) continue;
+    
+    // Гипотезы — не факты, judge не нужен
+    // Surprise-фильтр в memory.store() достаточен
+    const result = await this.memory.store(h, 'main', 'raw');
+    if (result === 'duplicate') {
+      this.bus.emit({ phase: 'act', text: `Hypothesis already known: "${h.slice(0, 60)}"`, ts: Date.now() });
+      state.curiosity = Math.max(0, state.curiosity - 0.03);
+      continue;
+    }
+    if (result !== 'skipped') {
       state._tickStoredCount++;
       this.identity.recordMemoryStored(1);
       if (h.toLowerCase().startsWith('question:')) {
         state.openQuestions = [h, ...state.openQuestions].slice(0, 10);
         this.identity.addCuriosity(h);
       }
-      this.bus.emit({ phase: 'store', text: `[hypothesis ${score}/10] ${h}`, data: { subtype: 'hypothesis' }, ts: Date.now() });
+      this.bus.emit({ 
+        phase: 'store', 
+        text: `[hypothesis] ${h}`, 
+        data: { subtype: 'hypothesis' }, 
+        ts: Date.now() 
+      });
     }
+  }
 
     state.curiosity = Math.min(1, state.curiosity + 0.12);
     return 0.55;

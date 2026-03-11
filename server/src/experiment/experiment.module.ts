@@ -4,10 +4,11 @@ import { ExperimentService } from './experiment.service';
 import { OllamaService } from '../generate/ollama.service';
 import { NovaMemoryService } from '../nova/nova-memory.service';
 import { ThoughtBusService } from '../nova/thought-bus.service';
+import { WebSearchService } from '../web-search/web-search.service';
 
 @Module({
   controllers: [ExperimentController],
-  providers:   [ExperimentService, OllamaService, NovaMemoryService, ThoughtBusService],
+  providers:   [ExperimentService, OllamaService, NovaMemoryService, ThoughtBusService, WebSearchService],
   exports:     [ExperimentService],
 })
 export class ExperimentModule {}

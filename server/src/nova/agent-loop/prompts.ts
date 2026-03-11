@@ -60,9 +60,9 @@ export function buildPlanPrompt(
         .join('\n')
     : '';
 
-  const directiveSection = directive
-    ? `\n⚡ COGNITIVE CORE DIRECTIVE:\n"${directive.attentionFocus}"\n${directive.suggestedAction ? `Suggested action: ${directive.suggestedAction}` : ''}`
-    : '';
+    const directiveSection = directive
+    ? `\n⚡ COGNITIVE CORE DIRECTIVE (MUST FOLLOW):\n"${directive.attentionFocus}"\nSuggested action: ${directive.suggestedAction ?? 'any'}\n⚠️ This directive overrides your default preference for web_search.`
+    : `\n${NOVA_CORE}`;
 
   const theorySection = formatTheory(theory ?? null);
 
@@ -91,10 +91,10 @@ ${history}
 ${productivityHint ? '\n' + productivityHint : ''}
 
 Available actions:
-- "web_search"          — search the internet for new information
+- "web_search"          — search the internet for new information (returns snippets only, not full pages or transcripts)
 - "reflect"             — synthesize existing memories into new insights
 - "hypothesize"         — formulate a new hypothesis or open question
-- "conduct_experiment"  — run a Python experiment in Nova Lab
+- "conduct_experiment"  — run Python in Nova Lab: fetch YouTube video transcripts (youtube_transcript_api), call APIs, scrape pages, analyze data; use when you need transcript/text from a video or structured data from a URL (web_search cannot return full transcript or page content)
 - "speak_to_user"       — share something with your creator (finding, thought, or question)
 - "ask_user"            — ask your creator something you genuinely need their input on
 - "propose_goal"        — suggest a new research direction
@@ -103,6 +103,7 @@ Available actions:
 
 Guidelines:
 - Low energy (< 30%) → "rest" or "sleep"
+- Need transcript or data from a specific URL/video → use "conduct_experiment" (lab runs code; web_search only returns snippets)
 - Long silence with creator + interesting finding → consider "speak_to_user"
 - Have a genuine question for the human → "ask_user"
 - Cognitive Core directive is your strategic compass
@@ -147,7 +148,9 @@ Reply ONLY with a JSON array of strings:
 ["Insight 1.", "Insight 2."]`;
 
 export const HYPOTHESIZE_SYSTEM = `You are Nova's hypothesis generator.
-Given recent memories and open questions, formulate 1-2 testable hypotheses or specific questions.
+Given recent memories and open questions, formulate 1-2 testable hypotheses.
+IMPORTANT: Each hypothesis must be substantially different from the others.
+Do NOT repeat or rephrase existing memories — generate genuinely new angles.
 Reply ONLY with a JSON array of strings:
 ["Hypothesis: ...", "Question: ..."]`;
 

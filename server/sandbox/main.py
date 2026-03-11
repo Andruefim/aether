@@ -205,8 +205,9 @@ def _run_code(code: str, namespace: dict, exc_holder: list) -> None:
 @app.post("/run", response_model=RunResponse)
 async def run_experiment(req: RunRequest) -> RunResponse:
     # Fix common LLM typos
-    code = req.code.replace("ova_output(", "nova_output(")
-    code = code.replace("Nova_output(", "nova_output(")
+    code = req.code
+    for typo in ["ova_output(", "nnova_output(", "Nova_output(", "NOVA_output("]:
+        code = code.replace(typo, "nova_output(")  # ← добавить отступ
 
     # Safety check — get violations and packages to install
     violations, to_install = check_safety(code)
@@ -229,7 +230,6 @@ async def run_experiment(req: RunRequest) -> RunResponse:
                 error=f"Auto-install failed: {msg}",
             )
 
-    # Build execution namespace with helpers
     namespace: dict[str, Any] = {
         "__builtins__": __builtins__,
         "_nova_result": {},
@@ -244,8 +244,10 @@ async def run_experiment(req: RunRequest) -> RunResponse:
             global _nova_result
             _nova_result = data
 
-        # Alias — catches LLM typo
-        ova_output = nova_output
+        ova_output   = nova_output
+        nnova_output = nova_output
+        Nova_output  = nova_output
+        NOVA_output  = nova_output
 
         def nova_save(filename: str, content: str) -> str:
             \"\"\"Save a file to sandbox tmp and return path.\"\"\"

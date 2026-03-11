@@ -85,7 +85,8 @@ export class OllamaService {
       model: model ?? this.defaultModel,
       messages,
       stream: false,
-      options: { temperature: 0.2 },
+      // think: "medium",
+      // options: { temperature: 0.2 },
     };
     if (tools) body.tools = tools;
     if (format) body.format = format;
@@ -153,7 +154,8 @@ export class OllamaService {
         model: modelName,
         messages,
         stream: true,
-        options: { temperature: 0.2 },
+        // think: "medium",
+        // options: { temperature: 0.2 },
       }),
     });
 

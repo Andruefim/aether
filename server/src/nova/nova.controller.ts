@@ -26,6 +26,13 @@ export class NovaController {
   @Post('input')
   @Sse()
   input(@Body() body: NovaInputDto): Observable<{ data: string }> {
+    const experimentTriggers = /эксперимент|experiment|провед|запусти|run.*lab|nova lab/i;
+    if (experimentTriggers.test(body.text ?? '')) {
+      this.agentLoop.injectUserCorrection(
+        `USER WANTS AN EXPERIMENT: "${body.text}" — next action MUST be conduct_experiment`
+      );
+    }
+
     if (!body.text?.trim()) {
       return new Observable((s) => {
         s.next({ data: JSON.stringify({ type: 'error', message: 'text required' }) });
@@ -92,8 +99,16 @@ export class NovaController {
   }
 
   @Post('answer')
-  receiveAnswer(@Body() body: { answer: string }) {
-    this.agentLoop.receiveAnswer(body.answer ?? '');
+  async receiveAnswer(@Body() body: { answer: string }) {
+    const text = body.answer ?? '';
+    
+    this.agentLoop.receiveAnswer(text);
+    
+    if (text.trim()) {
+      await this.memory.store(`[USER CORRECTION] ${text}`, 'main', 'raw', 0.95);
+      this.agentLoop.injectUserCorrection(text);
+    }
+    
     return { ok: true };
   }
 

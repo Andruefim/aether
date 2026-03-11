@@ -14,25 +14,50 @@ const SANDBOX_URL_DEFAULT = 'http://localhost:5050';
 
 const PLAN_SYSTEM = `You are Nova's experiment designer.
 Given a research hypothesis and goal, design a Python experiment to test it.
-Available libraries: numpy, pandas, scipy, networkx, requests (for public APIs).
 
-CRITICAL CODING RULES — follow these or the experiment will crash:
+AVAILABLE LIBRARIES (auto-installed if needed, just import them):
+- Data: numpy, pandas, scipy, statsmodels, sklearn
+- Network: networkx
+- Web/scraping: requests, bs4 (BeautifulSoup), lxml
+- YouTube: youtube_transcript_api, yt_dlp
+- Astronomy: astropy, halotools
+- NLP: nltk, textblob
+- Finance: yfinance
+- Stdlib: json, re, math, random, datetime, collections, csv, os, io
+
+YOUTUBE TRANSCRIPTS — use this exact pattern (youtube-transcript-api v1.2+):
+- Import: from youtube_transcript_api import YouTubeTranscriptApi
+- Create instance: ytt_api = YouTubeTranscriptApi()
+- Fetch: fetched = ytt_api.fetch(video_id, languages=["ru", "en", "de"])  # pass video ID, not URL
+- Result is iterable: for snippet in fetched: use snippet.text (and snippet.start, snippet.duration)
+- Extract video_id from URL: use re.search(r"[?&]v=([a-zA-Z0-9_-]+)", url) then .group(1)
+- NEVER use get_transcript (removed in v1.2); use .fetch() on an instance only.
+Example:
+\`\`\`python
+from youtube_transcript_api import YouTubeTranscriptApi
+import re
+
+url = "PASTE_URL_HERE"
+match = re.search(r"[?&]v=([a-zA-Z0-9_-]+)", url)
+video_id = match.group(1) if match else url.strip()
+
+try:
+    ytt_api = YouTubeTranscriptApi()
+    fetched = ytt_api.fetch(video_id, languages=["ru", "en", "de"])
+    full_text = " ".join(snippet.text for snippet in fetched)
+    nova_output({"type": "text", "summary": full_text[:500], "metrics": {"chars": len(full_text)}})
+except Exception as e:
+    nova_output({"type": "text", "summary": f"Transcript error: {e}"})
+\`\`\`
+
+CRITICAL CODING RULES:
+- youtube_transcript_api: pass only a string video_id to .fetch(video_id, languages=[...]); never pass a dict.
 - ALWAYS check the type of API responses before indexing: use isinstance(data, dict) / isinstance(data, list)
 - NEVER do data['key'] without first confirming data is a dict
 - NEVER iterate over a string thinking it's a list
 - Wrap ALL requests calls in try/except and check response.status_code before .json()
 - Always call nova_output({...}) at the end — even if the experiment produced no results
-- Use only simple arithmetic and pandas — no complex imports
-
-Example safe API pattern:
-  try:
-      resp = requests.get(url, timeout=10)
-      resp.raise_for_status()
-      data = resp.json()
-      if not isinstance(data, (dict, list)):
-          nova_output({"type": "text", "summary": f"Unexpected response type: {type(data)}"})
-  except Exception as e:
-      nova_output({"type": "text", "summary": f"Request failed: {e}"})
+- Target runtime under 30 seconds
 
 nova_output must be called with:
 nova_output({
@@ -41,9 +66,9 @@ nova_output({
   "metrics": {"key": value}
 })
 
--The output function is called EXACTLY: nova_output(...)  
-  Never write ova_output, Nova_output, or any other variant.
-  Always end your code with: nova_output({"type": "text", "summary": "..."})
+The output function is called EXACTLY: nova_output(...)
+Never write ova_output, Nova_output, or any other variant.
+Always end your code with: nova_output({"type": "text", "summary": "..."})
 
 Reply ONLY with JSON (no markdown):
 {
@@ -64,6 +89,7 @@ export class ExperimentService {
   private readonly logger   = new Logger(ExperimentService.name);
   private readonly emitter  = new EventEmitter();
   private readonly sandboxUrl: string;
+  private readonly labModel: string;
 
   // Latest results cache for the UI to fetch
   private recentResults: ExperimentResult[] = [];
@@ -75,6 +101,10 @@ export class ExperimentService {
     private readonly bus:     ThoughtBusService,
   ) {
     this.sandboxUrl = this.config.get<string>('SANDBOX_URL', SANDBOX_URL_DEFAULT);
+    this.labModel   = this.config.get<string>(
+      'LAB_MODEL',
+      this.config.get<string>('NOVA_FAST_MODEL', this.ollama.defaultModel),
+    );
     this.emitter.setMaxListeners(50);
   }
 
@@ -152,7 +182,7 @@ export class ExperimentService {
             content: `The following Python code failed with error: "${errorMsg}"\n\nFailed code:\n${plan.code}\n\nFix the code. Common cause: treating a string as a dict/list. Add type checks. Reply ONLY with JSON in the same format.`,
           },
         ];
-        const fixResp   = await this.ollama.chat(fixMsgs, undefined, undefined, 'json');
+        const fixResp   = await this.ollama.chat(fixMsgs, undefined, this.labModel, 'json');
         const fixRaw    = fixResp.content?.trim() ?? '{}';
         const fixClean  = fixRaw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
         const fixParsed = JSON.parse(fixClean) as Partial<ExperimentPlan>;
@@ -230,7 +260,7 @@ export class ExperimentService {
       { role: 'user',   content: `Research goal: ${goalContext}\n\nHypothesis to test: "${hypothesis}"\n\nDesign an experiment.` },
     ];
 
-    const resp   = await this.ollama.chat(msgs, undefined, undefined, 'json');
+    const resp   = await this.ollama.chat(msgs, undefined, this.labModel, 'json');
     const raw    = resp.content?.trim() ?? '{}';
     const clean  = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const parsed = JSON.parse(clean) as Partial<ExperimentPlan>;
@@ -248,8 +278,16 @@ export class ExperimentService {
 
   // ── Execute (Python sandbox) ───────────────────────────────────────────────
 
+  private sanitizeCode(code: string): string {
+    return code
+      .replace(/\bonnova_output\s*\(/g, 'nova_output(')
+      .replace(/\bova_output\s*\(/g,   'nova_output(')
+      .replace(/\bNova_output\s*\(/g,  'nova_output(')
+      .replace(/\bNOVA_output\s*\(/g,  'nova_output(');
+  }
+
   private async executeSandbox(code: string, experimentId: string) {
-    const fixedCode = code.replace(/\bova_output\s*\(/g, 'nova_output(');
+    const fixedCode = this.sanitizeCode(code);
 
     const res = await fetch(`${this.sandboxUrl}/run`, {
       method:  'POST',
@@ -295,7 +333,7 @@ export class ExperimentService {
     ];
 
     try {
-      const resp = await this.ollama.chat(msgs);
+      const resp = await this.ollama.chat(msgs, undefined, this.labModel);
       return resp.content?.trim() ?? 'No interpretation available.';
     } catch {
       const summary = (sandbox.result['summary'] as string | undefined) ?? '';

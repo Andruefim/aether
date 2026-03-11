@@ -54,17 +54,22 @@ Rules:
 - contradictions: max 3 items
 - attentionFocus: always present, max 200 chars
 - metaInsight: honest self-critique — e.g. "searches keep repeating similar queries", "no experiments despite many hypotheses", or null
-- confidence drops when contradictions appear, rises when experiments confirm`;
+- confidence drops when contradictions appear, rises when experiments confirm
+
+Nova Lab: runs Python and can fetch YouTube video transcripts (youtube_transcript_api), call APIs, scrape pages. If the goal requires a video transcript or data from a URL, set suggestedAction to conduct_experiment and nextExperiment to a lab run that fetches that content; do not suggest more web_search for transcript retrieval.`;
 
 const BOOTSTRAP_THEORY_SYSTEM = `You are Nova's Cognitive Core initializing for the first time.
 Given the research goals provided, form an initial working theory to guide exploration.
+
+Nova Lab can run Python to fetch YouTube transcripts (youtube_transcript_api), call APIs, scrape pages. If the goal involves a YouTube video or a specific URL, the first test should be a lab experiment (conduct_experiment) that fetches the transcript or page content — not web_search.
+
 Respond ONLY with valid JSON:
 {
   "claim": "<initial hypothesis to investigate>",
   "confidence": 0.3,
   "supportingEvidence": [],
   "contradictions": [],
-  "nextExperiment": "<first empirical test to run>"
+  "nextExperiment": "<first empirical test to run — e.g. 'Fetch transcript of video <URL> in Nova Lab and extract the answer'>"
 }`;
 
 // ── Service ───────────────────────────────────────────────────────────────────

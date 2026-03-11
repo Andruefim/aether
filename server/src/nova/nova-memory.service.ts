@@ -106,10 +106,11 @@ export class NovaMemoryService implements OnModuleInit {
     text: string,
     type: 'main' | 'association' | 'voice' = 'main',
     status: 'raw' | 'consolidated' = 'raw',
+    forceSurprise?: number,   // ← добавить
   ): Promise<string> {
     const trimmed = text.trim();
     if (!trimmed) throw new Error('text is empty');
-
+  
     let vector: number[];
     try {
       vector = await this.embed(trimmed);
@@ -117,14 +118,10 @@ export class NovaMemoryService implements OnModuleInit {
       this.logger.warn(`embed skipped: ${err instanceof Error ? err.message : String(err)}`);
       return 'skipped';
     }
-
-    // Compute surprise before storing
-    const surprise = await this.computeSurprise(vector);
-
-    // Skip duplicate check for consolidated memories — their originals were
-    // just deleted, so remaining memories may look similar but the consolidated
-    // version is the intended replacement and must not be rejected.
-    if (status !== 'consolidated' && surprise < MIN_SURPRISE) {
+  
+    const surprise = forceSurprise ?? await this.computeSurprise(vector); // ← изменить
+  
+    if (status !== 'consolidated' && forceSurprise === undefined && surprise < MIN_SURPRISE) { // ← изменить
       this.logger.debug(`[store] Skipped near-duplicate (surprise=${surprise.toFixed(3)}): "${trimmed.slice(0, 60)}"`);
       return 'duplicate';
     }
